@@ -1,5 +1,7 @@
 const chat = document.getElementById("chat");
 
+const userId = crypto.randomUUID();
+
 async function sendMessage() {
 
   const input = document.getElementById("message");
@@ -21,6 +23,7 @@ async function sendMessage() {
 
     body: JSON.stringify({
       message: text,
+      userId: userId,
     }),
   });
 

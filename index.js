@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
+import fs from "fs";
 
 dotenv.config();
 
@@ -14,6 +15,8 @@ app.use(express.static("public"));
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
+
+const conversations = {};
 
 const systemPrompt = `
 Sos un vendedor argentino profesional especializado en planes de ahorro Peugeot.
@@ -53,18 +56,23 @@ Tu prioridad es:
 4. cerrar la venta
 `;
 
-const messages = [
-  {
-    role: "system",
-    content: systemPrompt,
-  },
-];
-
 app.post("/chat", async (req, res) => {
 
   const userMessage = req.body.message;
 
-  messages.push({
+  const userId = req.body.userId;
+
+  if (!conversations[userId]) {
+
+    conversations[userId] = [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+    ];
+  }
+
+  conversations[userId].push({
     role: "user",
     content: userMessage,
   });
@@ -73,15 +81,17 @@ app.post("/chat", async (req, res) => {
 
     const response = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
-      messages: messages,
+      messages: conversations[userId],
     });
 
     const botReply = response.choices[0].message.content;
 
-    messages.push({
+    conversations[userId].push({
       role: "assistant",
       content: botReply,
     });
+
+    saveConversation(userId);
 
     res.json({
       reply: botReply,
@@ -96,6 +106,14 @@ app.post("/chat", async (req, res) => {
     });
   }
 });
+
+function saveConversation(userId) {
+
+  fs.writeFileSync(
+    "conversations.json",
+    JSON.stringify(conversations, null, 2)
+  );
+}
 
 const PORT = process.env.PORT || 3000;
 
