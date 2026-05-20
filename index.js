@@ -71,7 +71,6 @@ Tu prioridad es:
 app.post("/chat", async (req, res) => {
 
   const userMessage = req.body.message;
-
   const userId = req.body.userId;
 
   if (!conversations[userId]) {
@@ -103,7 +102,7 @@ app.post("/chat", async (req, res) => {
       content: botReply,
     });
 
-    saveConversation();
+    saveConversations();
 
     res.json({
       reply: botReply,
@@ -119,7 +118,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-function saveConversation() {
+function getCleanConversations() {
 
   const cleanConversations = {};
 
@@ -130,15 +129,20 @@ function saveConversation() {
     );
   }
 
+  return cleanConversations;
+}
+
+function saveConversations() {
+
   fs.writeFileSync(
     "conversations.json",
-    JSON.stringify(cleanConversations, null, 2)
+    JSON.stringify(getCleanConversations(), null, 2)
   );
 }
 
 app.get("/conversations", (req, res) => {
 
-  res.json(conversations);
+  res.json(getCleanConversations());
 
 });
 
@@ -146,6 +150,6 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
 
-  console.log(\`Servidor funcionando en puerto \${PORT}\`);
+  console.log(`Servidor funcionando en puerto ${PORT}`);
 
 });
