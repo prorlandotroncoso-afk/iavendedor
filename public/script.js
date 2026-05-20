@@ -15,6 +15,7 @@ async function sendMessage() {
   input.value = "";
 
   const response = await fetch("/chat", {
+
     method: "POST",
 
     headers: {

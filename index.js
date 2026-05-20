@@ -91,7 +91,7 @@ app.post("/chat", async (req, res) => {
       content: botReply,
     });
 
-    saveConversation(userId);
+    saveConversation();
 
     res.json({
       reply: botReply,
@@ -107,7 +107,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-function saveConversation(userId) {
+function saveConversation() {
 
   fs.writeFileSync(
     "conversations.json",
@@ -115,8 +115,16 @@ function saveConversation(userId) {
   );
 }
 
+app.get("/conversations", (req, res) => {
+
+  res.json(conversations);
+
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
+
   console.log(`Servidor funcionando en puerto ${PORT}`);
+
 });
