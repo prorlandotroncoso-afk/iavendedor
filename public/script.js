@@ -6,7 +6,7 @@ async function sendMessage() {
 
   const input = document.getElementById("message");
 
-  const text = input.value;
+  const text = input.value.trim();
 
   if (!text) return;
 
@@ -14,23 +14,30 @@ async function sendMessage() {
 
   input.value = "";
 
-  const response = await fetch("/chat", {
+  try {
 
-    method: "POST",
+    const response = await fetch("/chat", {
 
-    headers: {
-      "Content-Type": "application/json",
-    },
+      method: "POST",
 
-    body: JSON.stringify({
-      message: text,
-      userId: userId,
-    }),
-  });
+      headers: {
+        "Content-Type": "application/json",
+      },
 
-  const data = await response.json();
+      body: JSON.stringify({
+        message: text,
+        userId: userId,
+      }),
+    });
 
-  addMessage(data.reply, "bot");
+    const data = await response.json();
+
+    addMessage(data.reply, "bot");
+
+  } catch (error) {
+
+    addMessage("Error al conectar con el servidor.", "bot");
+  }
 }
 
 function addMessage(text, type) {
@@ -46,3 +53,15 @@ function addMessage(text, type) {
 
   chat.scrollTop = chat.scrollHeight;
 }
+
+const input = document.getElementById("message");
+
+input.addEventListener("keypress", function(event) {
+
+  if (event.key === "Enter") {
+
+    event.preventDefault();
+
+    sendMessage();
+  }
+});
