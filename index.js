@@ -121,9 +121,18 @@ app.post("/chat", async (req, res) => {
 
 function saveConversation() {
 
+  const cleanConversations = {};
+
+  for (const userId in conversations) {
+
+    cleanConversations[userId] = conversations[userId].filter(
+      message => message.role !== "system"
+    );
+  }
+
   fs.writeFileSync(
     "conversations.json",
-    JSON.stringify(conversations, null, 2)
+    JSON.stringify(cleanConversations, null, 2)
   );
 }
 
@@ -137,6 +146,6 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
 
-  console.log(`Servidor funcionando en puerto ${PORT}`);
+  console.log(\`Servidor funcionando en puerto \${PORT}\`);
 
 });
