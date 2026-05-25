@@ -1,0 +1,29 @@
+{
+  "208": {
+    "modelo": "208",
+    "cuota": "$180.000",
+    "anticipo": "$4.000.000",
+    "tipoEntrega": "Entrega pactada"
+  },
+
+  "2008": {
+    "modelo": "2008",
+    "cuota": "$320.000",
+    "anticipo": "$6.500.000",
+    "tipoEntrega": "Entrega asegurada"
+  },
+
+  "partner": {
+    "modelo": "Partner",
+    "cuota": "$290.000",
+    "anticipo": "$5.000.000",
+    "tipoEntrega": "Plan utilitario"
+  },
+
+  "expert": {
+    "modelo": "Expert",
+    "cuota": "$410.000",
+    "anticipo": "$8.000.000",
+    "tipoEntrega": "Entrega pactada"
+  }
+}

@@ -2,6 +2,13 @@ const chat = document.getElementById("chat");
 
 const userId = crypto.randomUUID();
 
+const currentCampaign = {
+  modelo: "208",
+  cuota: "$180.000",
+  anticipo: "$4.000.000",
+  tipoEntrega: "Entrega pactada"
+};
+
 async function sendMessage() {
 
   const input = document.getElementById("message");
@@ -27,6 +34,7 @@ async function sendMessage() {
       body: JSON.stringify({
         message: text,
         userId: userId,
+        campaign: currentCampaign
       }),
     });
 
