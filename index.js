@@ -348,6 +348,26 @@ app.get("/conversations", (req, res) => {
   res.json(getCleanConversations());
 
 });
+app.post("/save-campaign", (req, res) => {
+
+  const data = req.body;
+
+  const campaigns = JSON.parse(
+    fs.readFileSync("./campaigns.json")
+  );
+
+  campaigns[data.modelo] = data;
+
+  fs.writeFileSync(
+    "./campaigns.json",
+    JSON.stringify(campaigns, null, 2)
+  );
+
+  res.json({
+    success: true,
+  });
+
+});
 
 const PORT = process.env.PORT || 3000;
 
