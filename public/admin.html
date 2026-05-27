@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Panel Admin</title>
+
+  <style>
+
+    body {
+      font-family: Arial;
+      background: #111;
+      color: white;
+      padding: 20px;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: #1d1d1d;
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 500px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: none;
+      font-size: 16px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      background: #00a86b;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <h1>Panel Admin Campañas</h1>
+
+  <div class="card">
+
+    <input id="modelo" placeholder="Modelo">
+
+    <input id="cuota" placeholder="Cuota">
+
+    <input id="anticipo" placeholder="Anticipo">
+
+    <input id="plan" placeholder="Plan">
+
+    <input id="plazo" placeholder="Plazo">
+
+    <input id="entrega" placeholder="Entrega">
+
+    <button onclick="saveCampaign()">
+
+      Guardar Campaña
+
+    </button>
+
+  </div>
+
+  <script>
+
+    async function saveCampaign() {
+
+      const data = {
+
+        modelo: document.getElementById("modelo").value,
+
+        cuota: document.getElementById("cuota").value,
+
+        anticipo: document.getElementById("anticipo").value,
+
+        plan: document.getElementById("plan").value,
+
+        plazo: document.getElementById("plazo").value,
+
+        entrega: document.getElementById("entrega").value,
+
+      };
+
+      await fetch("/save-campaign", {
+
+        method: "POST",
+
+        headers: {
+
+          "Content-Type": "application/json",
+
+        },
+
+        body: JSON.stringify(data),
+
+      });
+
+      alert("Campaña guardada");
+
+    }
+
+  </script>
+
+</body>
+
+</html>
