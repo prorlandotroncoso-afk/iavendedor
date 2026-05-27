@@ -3,6 +3,10 @@
 
     "modelo": "208 Allure AM25",
 
+    "concesionario": "SURFRANCE",
+
+    "ubicacion": "Godoy Cruz, Mendoza",
+
     "activo": true,
 
     "precioLista": "$35.530.000",
@@ -13,7 +17,7 @@
 
     "anticipo": "30%",
 
-    "entrega": "Asegurada",
+    "entrega": "Adjudicación asegurada",
 
     "suscripcion": "$296.083",
 
@@ -23,13 +27,15 @@
 
     "adjudicacion": "Sorteo o licitación",
 
-    "entregaAsegurada": "Cuotas 2, 6, 9 y 12",
+    "entregaAsegurada": "Cuotas 2, 6, 9 y 12 integrando el 30%",
 
     "usaUsado": true,
 
+    "soloDNI": true,
+
     "vigencia": "01/12/2025",
 
-    "observaciones": "Entrega pactada según integración del 30%",
+    "observaciones": "Plan de ahorro oficial Peugeot financiado directamente de fábrica.",
 
     "cuotas": [
 

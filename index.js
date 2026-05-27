@@ -276,6 +276,105 @@ app.post("/chat", async (req, res) => {
   const userMessage = req.body.message;
   const userId = req.body.userId;
 
+  const campaigns = JSON.parse(
+    fs.readFileSync("./campaigns.json")
+  );
+
+  function detectCampaign(message) {
+
+    const text = message.toLowerCase();
+
+    if (text.includes("208")) {
+      return campaigns["208"];
+    }
+
+    if (text.includes("2008")) {
+      return campaigns["2008"];
+    }
+
+    if (text.includes("partner")) {
+      return campaigns["partner"];
+    }
+
+    if (text.includes("expert")) {
+      return campaigns["expert"];
+    }
+
+    return null;
+  }
+
+  const currentCampaign = detectCampaign(userMessage);
+
+  let enhancedMessage = userMessage;
+
+  if (currentCampaign) {
+
+    enhancedMessage += `
+
+INFORMACIÓN OFICIAL DE CAMPAÑA
+
+Modelo:
+${currentCampaign.modelo}
+
+Precio Lista:
+${currentCampaign.precioLista}
+
+Plan:
+${currentCampaign.plan}
+
+Plazo:
+${currentCampaign.plazo}
+
+Anticipo:
+${currentCampaign.anticipo}
+
+Cuota Suscripción:
+${currentCampaign.suscripcion}
+
+Cuota Publicitaria:
+${currentCampaign.cuotaPublicitaria}
+
+Concesionario:
+${currentCampaign.concesionario}
+
+Ubicación:
+${currentCampaign.ubicacion}
+
+Requisitos:
+Solo DNI.
+
+INSTRUCCIONES OBLIGATORIAS:
+
+- Nunca inventes precios.
+- Nunca inventes cuotas.
+- Nunca inventes requisitos.
+- Nunca inventes ubicación.
+- Nunca uses "tú".
+- Nunca uses "tienes".
+- Nunca uses "puedes".
+- Siempre usá voseo argentino.
+- Nunca digas Buenos Aires.
+- Siempre hablá como asesor de SURFRANCE Mendoza.
+- Nunca preguntes:
+  "¿cuota o entrega?"
+- El cliente llega desde publicidad caliente.
+- El cliente quiere información concreta.
+- Sé directo.
+- No des vueltas innecesarias.
+- No hagas preguntas débiles como:
+  "¿te parece razonable?"
+- El foco principal es:
+  cuotas
+  financiación
+  acceso al vehículo
+  entrega
+  anticipo
+- Si preguntan requisitos:
+  responder SOLO DNI.
+- Redirigí siempre la conversación hacia avanzar.
+`;
+  }
+
   if (!conversations[userId]) {
 
     conversations[userId] = [
@@ -288,7 +387,7 @@ app.post("/chat", async (req, res) => {
 
   conversations[userId].push({
     role: "user",
-    content: userMessage,
+    content: enhancedMessage,
   });
 
   try {
