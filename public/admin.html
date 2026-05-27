@@ -25,17 +25,30 @@
     .card {
       background: #1d1d1d;
       padding: 20px;
-      border-radius: 10px;
-      max-width: 500px;
+      border-radius: 12px;
+      max-width: 700px;
+      margin: auto;
     }
 
-    input {
+    h2 {
+      margin-top: 30px;
+      margin-bottom: 15px;
+    }
+
+    input,
+    textarea {
       width: 100%;
       padding: 12px;
       margin-bottom: 12px;
       border-radius: 8px;
       border: none;
       font-size: 16px;
+      box-sizing: border-box;
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
     }
 
     button {
@@ -47,6 +60,7 @@
       color: white;
       font-size: 16px;
       cursor: pointer;
+      margin-top: 20px;
     }
 
   </style>
@@ -55,21 +69,51 @@
 
 <body>
 
-  <h1>Panel Admin Campañas</h1>
-
   <div class="card">
+
+    <h1>Panel Admin Campañas</h1>
+
+    <h2>Información Principal</h2>
 
     <input id="modelo" placeholder="Modelo">
 
-    <input id="cuota" placeholder="Cuota">
-
-    <input id="anticipo" placeholder="Anticipo">
+    <input id="precioLista" placeholder="Precio Lista">
 
     <input id="plan" placeholder="Plan">
 
     <input id="plazo" placeholder="Plazo">
 
+    <input id="anticipo" placeholder="Anticipo">
+
     <input id="entrega" placeholder="Entrega">
+
+    <h2>Cuotas</h2>
+
+    <input id="suscripcion" placeholder="Cuota Suscripción">
+
+    <input id="cuotaPura" placeholder="Cuota Pura">
+
+    <input id="cuotaPublicitaria" placeholder="Cuota Publicitaria">
+
+    <h2>Adjudicación</h2>
+
+    <input id="adjudicacion" placeholder="Adjudicación">
+
+    <input id="entregaAsegurada" placeholder="Entrega Asegurada">
+
+    <h2>Observaciones</h2>
+
+    <textarea id="observaciones"></textarea>
+
+    <h2>Tramos de Cuotas</h2>
+
+    <textarea id="cuotas" placeholder='Ejemplo:
+2-12 = $463.626
+13-13 = $444.095'></textarea>
+
+    <h2>Equipamiento</h2>
+
+    <textarea id="equipamiento" placeholder='Una línea por equipamiento'></textarea>
 
     <button onclick="saveCampaign()">
 
@@ -83,19 +127,78 @@
 
     async function saveCampaign() {
 
+      const cuotasTexto =
+        document.getElementById("cuotas")
+        .value
+        .split("\n");
+
+      const cuotas = cuotasTexto.map(line => {
+
+        const parts = line.split("=");
+
+        if (!parts[1]) return null;
+
+        const rango = parts[0].trim().split("-");
+
+        return {
+
+          desde: Number(rango[0]),
+
+          hasta: Number(rango[1]),
+
+          valor: parts[1].trim(),
+
+        };
+
+      }).filter(Boolean);
+
+      const equipamiento =
+        document.getElementById("equipamiento")
+        .value
+        .split("\n")
+        .filter(Boolean);
+
       const data = {
 
-        modelo: document.getElementById("modelo").value,
+        modelo:
+          document.getElementById("modelo").value,
 
-        cuota: document.getElementById("cuota").value,
+        precioLista:
+          document.getElementById("precioLista").value,
 
-        anticipo: document.getElementById("anticipo").value,
+        plan:
+          document.getElementById("plan").value,
 
-        plan: document.getElementById("plan").value,
+        plazo:
+          document.getElementById("plazo").value,
 
-        plazo: document.getElementById("plazo").value,
+        anticipo:
+          document.getElementById("anticipo").value,
 
-        entrega: document.getElementById("entrega").value,
+        entrega:
+          document.getElementById("entrega").value,
+
+        suscripcion:
+          document.getElementById("suscripcion").value,
+
+        cuotaPura:
+          document.getElementById("cuotaPura").value,
+
+        cuotaPublicitaria:
+          document.getElementById("cuotaPublicitaria").value,
+
+        adjudicacion:
+          document.getElementById("adjudicacion").value,
+
+        entregaAsegurada:
+          document.getElementById("entregaAsegurada").value,
+
+        observaciones:
+          document.getElementById("observaciones").value,
+
+        cuotas: cuotas,
+
+        equipamiento: equipamiento,
 
       };
 
