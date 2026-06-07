@@ -75,6 +75,8 @@
 
     <h2>Información Principal</h2>
 
+    <input id="marca" placeholder="Marca (Peugeot / Citroën / Chery)">
+
     <input id="modelo" placeholder="Modelo">
 
     <input id="precioLista" placeholder="Precio Lista">
@@ -86,6 +88,24 @@
     <input id="anticipo" placeholder="Anticipo">
 
     <input id="entrega" placeholder="Entrega">
+
+    <h2>Material Comercial</h2>
+
+    <input
+      id="pdfPauta"
+      placeholder="Link PDF Pauta Comercial">
+
+    <input
+      id="pdfFicha"
+      placeholder="Link PDF Ficha Técnica">
+
+    <input
+      id="videoUrl"
+      placeholder="Link Video Comercial">
+
+    <input
+      id="imagenPrincipal"
+      placeholder="Link Imagen Principal">
 
     <h2>Cuotas</h2>
 
@@ -160,6 +180,9 @@
 
       const data = {
 
+        marca:
+          document.getElementById("marca").value,
+
         modelo:
           document.getElementById("modelo").value,
 
@@ -177,6 +200,18 @@
 
         entrega:
           document.getElementById("entrega").value,
+
+        pdfPauta:
+          document.getElementById("pdfPauta").value,
+
+        pdfFicha:
+          document.getElementById("pdfFicha").value,
+
+        videoUrl:
+          document.getElementById("videoUrl").value,
+
+        imagenPrincipal:
+          document.getElementById("imagenPrincipal").value,
 
         suscripcion:
           document.getElementById("suscripcion").value,
