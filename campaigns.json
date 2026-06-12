@@ -1,36 +1,29 @@
 {
   "208": {
-
     "modelo": "208 Allure AM25",
-
     "concesionario": "SURFRANCE",
-
     "ubicacion": "Godoy Cruz, Mendoza",
-
     "activo": true,
 
     "precioLista": "$35.530.000",
-
     "plan": "70/30",
-
     "plazo": "84 cuotas",
-
     "anticipo": "30%",
-
     "entrega": "Adjudicación asegurada",
 
     "suscripcion": "$296.083",
-
     "cuotaPura": "$274.907",
-
     "cuotaPublicitaria": "$463.626",
 
     "adjudicacion": "Sorteo o licitación",
-
     "entregaAsegurada": "Cuotas 2, 6, 9 y 12 integrando el 30%",
 
-    "usaUsado": true,
+    "materialComercial": "",
+    "pdfFichaTecnica": "",
+    "videoComercial": "",
+    "imagenPrincipal": "",
 
+    "usaUsado": true,
     "soloDNI": true,
 
     "vigencia": "01/12/2025",
@@ -38,47 +31,39 @@
     "observaciones": "Plan de ahorro oficial Peugeot financiado directamente de fábrica.",
 
     "cuotas": [
-
       {
         "desde": 2,
         "hasta": 12,
         "valor": "$463.626"
       },
-
       {
         "desde": 13,
         "hasta": 13,
         "valor": "$444.095"
       },
-
       {
         "desde": 14,
         "hasta": 18,
         "valor": "$349.289"
       },
-
       {
         "desde": 19,
         "hasta": 25,
         "valor": "$380.631"
       },
-
       {
         "desde": 26,
         "hasta": 42,
         "valor": "$400.220"
       },
-
       {
         "desde": 43,
         "hasta": 84,
         "valor": "$380.631"
       }
-
     ],
 
     "equipamiento": [
-
       "Climatizador automático",
       "ESP",
       "ABS",
@@ -86,7 +71,12 @@
       "Android Auto",
       "Apple CarPlay",
       "Cámara de retroceso"
-
     ]
-  }
+  },
+
+  "2008": {},
+
+  "partner": {},
+
+  "expert": {}
 }
