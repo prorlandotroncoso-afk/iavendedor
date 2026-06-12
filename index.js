@@ -371,9 +371,24 @@ app.post("/chat", async (req, res) => {
     ) {
       return campaign;
     }
+
+    const palabras = modelo.split(" ");
+
+    for (const palabra of palabras) {
+
+      if (
+        palabra.length > 2 &&
+        text.includes(palabra)
+      ) {
+        return campaign;
+      }
+
+    }
+
   }
 
   return null;
+
 }
 
   const currentCampaign = detectCampaign(userMessage);
