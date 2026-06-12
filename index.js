@@ -378,6 +378,54 @@ app.post("/chat", async (req, res) => {
 
   const currentCampaign = detectCampaign(userMessage);
 
+const text = userMessage.toLowerCase();
+
+if (currentCampaign) {
+
+  if (
+    text.includes("ficha") ||
+    text.includes("pdf")
+  ) {
+
+    return res.json({
+      reply: `Te comparto la ficha técnica:\n\n${currentCampaign.pdfFichaTecnica}`
+    });
+
+  }
+
+  if (
+    text.includes("video")
+  ) {
+
+    return res.json({
+      reply: `Te comparto el video comercial:\n\n${currentCampaign.videoComercial}`
+    });
+
+  }
+
+  if (
+    text.includes("foto") ||
+    text.includes("imagen")
+  ) {
+
+    return res.json({
+      reply: `Te comparto una imagen del vehículo:\n\n${currentCampaign.imagenPrincipal}`
+    });
+
+  }
+
+  if (
+    text.includes("material")
+  ) {
+
+    return res.json({
+      reply: `Te comparto el material comercial:\n\n${currentCampaign.materialComercial}`
+    });
+
+  }
+
+}
+
   let enhancedMessage = userMessage;
 
   if (currentCampaign) {
