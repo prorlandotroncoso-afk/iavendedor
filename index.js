@@ -413,6 +413,18 @@ ${currentCampaign.concesionario}
 Ubicación:
 ${currentCampaign.ubicacion}
 
+Material Comercial:
+${currentCampaign.materialComercial || "No disponible"}
+
+Ficha Técnica:
+${currentCampaign.pdfFichaTecnica || "No disponible"}
+
+Video Comercial:
+${currentCampaign.videoComercial || "No disponible"}
+
+Imagen Principal:
+${currentCampaign.imagenPrincipal || "No disponible"}
+
 Requisitos:
 Solo DNI.
 
