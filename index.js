@@ -567,11 +567,6 @@ function saveConversations() {
   );
 }
 
-app.get("/conversations", (req, res) => {
-
-  res.json(getCleanConversations());
-
-});
 app.post("/save-campaign", (req, res) => {
 
   const data = req.body;
@@ -580,7 +575,11 @@ app.post("/save-campaign", (req, res) => {
     fs.readFileSync("./campaigns.json")
   );
 
-  campaigns[data.modelo] = data;
+  const key = data.modelo
+    .trim()
+    .toLowerCase();
+
+  campaigns[key] = data;
 
   fs.writeFileSync(
     "./campaigns.json",
@@ -590,13 +589,5 @@ app.post("/save-campaign", (req, res) => {
   res.json({
     success: true,
   });
-
-});
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-
-  console.log(`Servidor funcionando en puerto ${PORT}`);
 
 });
