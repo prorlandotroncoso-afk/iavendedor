@@ -355,26 +355,26 @@ app.post("/chat", async (req, res) => {
 
   function detectCampaign(message) {
 
-    const text = message.toLowerCase();
+  const text = message.toLowerCase();
 
-    if (text.includes("208")) {
-      return campaigns["208"];
+  for (const key in campaigns) {
+
+    const campaign = campaigns[key];
+
+    if (!campaign.modelo) continue;
+
+    const modelo = campaign.modelo.toLowerCase();
+
+    if (
+      text.includes(key.toLowerCase()) ||
+      text.includes(modelo)
+    ) {
+      return campaign;
     }
-
-    if (text.includes("2008")) {
-      return campaigns["2008"];
-    }
-
-    if (text.includes("partner")) {
-      return campaigns["partner"];
-    }
-
-    if (text.includes("expert")) {
-      return campaigns["expert"];
-    }
-
-    return null;
   }
+
+  return null;
+}
 
   const currentCampaign = detectCampaign(userMessage);
 
