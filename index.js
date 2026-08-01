@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MOTOR MODULAR DE MARTIN
+// index.js - MOTOR MODULAR DE MARTIN CON MANUAL DE OPERACIONES
 // ============================================================
 
 import express from 'express';
@@ -23,12 +23,12 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ============================================================
-// 1. CARGA DEL VENDEDOR (AHORA CON AWAIT)
+// 1. CARGA DEL VENDEDOR
 // ============================================================
 let seller;
 
 try {
-    seller = await loadSeller();  // <--- AGREGAR "await" AQUÍ
+    seller = await loadSeller();
     console.log(`✅ Vendedor cargado: ${seller.nombre} (${seller.industria})`);
 } catch (error) {
     console.error('❌ Error cargando vendedor:', error.message);
@@ -36,28 +36,51 @@ try {
 }
 
 // ============================================================
-// 2. GROQ
+// 2. CARGA DEL MANUAL DE OPERACIONES
+// ============================================================
+function cargarManual() {
+    const manualPath = path.join(__dirname, 'sellers', seller.nombreCarpeta, 'knowledge', 'manual.txt');
+    if (fs.existsSync(manualPath)) {
+        return fs.readFileSync(manualPath, 'utf-8');
+    }
+    return '';
+}
+
+const manual = cargarManual();
+if (manual) {
+    console.log('✅ Manual de operaciones cargado');
+} else {
+    console.log('⚠️ Manual de operaciones no encontrado');
+}
+
+// ============================================================
+// 3. GROQ
 // ============================================================
 const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
 });
 
 // ============================================================
-// 3. CONVERSACIONES
+// 4. CONVERSACIONES
 // ============================================================
 const conversations = {};
 
 function getConversation(userId) {
     if (!conversations[userId]) {
+        // Crear el sistema con prompt + manual
+        let systemContent = seller.prompt;
+        if (manual) {
+            systemContent += `\n\nMANUAL DE OPERACIONES:\n${manual}`;
+        }
         conversations[userId] = [
-            { role: 'system', content: seller.prompt }
+            { role: 'system', content: systemContent }
         ];
     }
     return conversations[userId];
 }
 
 // ============================================================
-// 4. DETECCIÓN DE CAMPAÑA
+// 5. DETECCIÓN DE CAMPAÑA
 // ============================================================
 function detectCampaign(message, campaigns) {
     const text = message.toLowerCase();
@@ -79,19 +102,22 @@ function detectCampaign(message, campaigns) {
 }
 
 // ============================================================
-// 5. PROCESAR MENSAJE
+// 6. PROCESAR MENSAJE
 // ============================================================
 async function procesarMensaje(userMessage, userId) {
     const conv = getConversation(userId);
     
+    // Cargar campaigns desde la carpeta del seller
     const campaignsPath = path.join(__dirname, 'sellers', seller.nombreCarpeta, 'campaigns.json');
     let campaigns = {};
     if (fs.existsSync(campaignsPath)) {
         campaigns = JSON.parse(fs.readFileSync(campaignsPath));
     }
     
+    // Detectar campaña
     const currentCampaign = detectCampaign(userMessage, campaigns);
     
+    // Enriquecer mensaje
     let enhancedMessage = userMessage;
     if (currentCampaign) {
         enhancedMessage += `\n\nINFORMACIÓN OFICIAL DE CAMPAÑA:\n${JSON.stringify(currentCampaign, null, 2)}`;
@@ -111,12 +137,14 @@ async function procesarMensaje(userMessage, userId) {
         
         let botReply = response.choices[0].message.content;
         
-        if (!botReply.includes('derivo') && !botReply.includes('paso con')) {
+        // Humanizar solo si no es un saludo corto
+        if (!botReply.startsWith('Hola') && !botReply.startsWith('Buen')) {
             botReply = humanizarRespuesta(botReply);
         }
         
         conv.push({ role: 'assistant', content: botReply });
         
+        // Guardar en Google Sheets (si está configurado)
         try {
             await guardarLead({
                 telefono: userId,
@@ -138,7 +166,7 @@ async function procesarMensaje(userMessage, userId) {
 }
 
 // ============================================================
-// 6. ENDPOINTS
+// 7. ENDPOINTS
 // ============================================================
 app.post('/chat', async (req, res) => {
     const { message, userId } = req.body;
@@ -162,7 +190,7 @@ app.post('/save-campaign', (req, res) => {
 });
 
 // ============================================================
-// 7. INICIO
+// 8. INICIO
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

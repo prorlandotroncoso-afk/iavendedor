@@ -10,7 +10,7 @@ export function humanizarRespuesta(texto) {
     
     // 20% de probabilidad de agregar muletilla (solo si no es un saludo)
     if (Math.random() < 0.2 && !texto.startsWith('Hola') && !texto.startsWith('Buen')) {
-        const muletillas = ['Mirá, ', 'Escuchá, ', 'Básicamente ', 'La cuestión es que '];
+        const muletillas = ['Mirá, ', 'Básicamente ', 'La cuestión es que '];
         const elegida = muletillas[Math.floor(Math.random() * muletillas.length)];
         texto = elegida + texto.toLowerCase();
         texto = texto.charAt(0).toUpperCase() + texto.slice(1);
