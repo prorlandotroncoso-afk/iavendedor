@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MARTIN VERSIÓN DEFINITIVA
+// index.js - MARTIN VERSIÓN DEFINITIVA (CON MANEJO DE HOLAS)
 // ============================================================
 
 import express from 'express';
@@ -23,10 +23,24 @@ app.use(express.static('public'));
 // 1. CARGAR CONFIGURACIÓN
 // ============================================================
 const flujoPath = path.join(__dirname, 'sellers', 'martin-autos', 'flujo.json');
-let flujo = JSON.parse(fs.readFileSync(flujoPath, 'utf-8'));
+let flujo = {};
+if (fs.existsSync(flujoPath)) {
+    flujo = JSON.parse(fs.readFileSync(flujoPath, 'utf-8'));
+    console.log('✅ flujo.json cargado');
+} else {
+    console.error('❌ flujo.json no encontrado');
+    process.exit(1);
+}
 
 const campaignsPath = path.join(__dirname, 'sellers', 'martin-autos', 'campaigns.json');
-let campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
+let campaigns = {};
+if (fs.existsSync(campaignsPath)) {
+    campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
+    console.log('✅ campaigns.json cargado');
+} else {
+    console.error('❌ campaigns.json no encontrado');
+    process.exit(1);
+}
 
 // ============================================================
 // 2. GROQ (IA)
@@ -45,7 +59,7 @@ function getCliente(userId) {
         clientes[userId] = {
             etapa: 'presentacion',
             modelo: null,
-            tipo_cliente: null, // 'rapido' o 'financiacion'
+            tipo_cliente: null,
             oferta_aceptada: false,
             historial: []
         };
@@ -59,8 +73,18 @@ function getCliente(userId) {
 function detectarModelo(mensaje) {
     const texto = mensaje.toLowerCase();
     for (const [key, campaign] of Object.entries(campaigns)) {
-        if (texto.includes(key.toLowerCase()) || texto.includes(campaign.modelo.toLowerCase())) {
-            return key;
+        const modelo = campaign.modelo.toLowerCase();
+        const palabrasClave = [key.toLowerCase(), modelo];
+        const partes = modelo.split(' ');
+        for (const parte of partes) {
+            if (parte.length > 2) {
+                palabrasClave.push(parte);
+            }
+        }
+        for (const palabra of palabrasClave) {
+            if (texto.includes(palabra)) {
+                return key;
+            }
         }
     }
     return null;
@@ -160,6 +184,11 @@ async function procesarMensaje(userMessage, userId) {
             const respuesta = "Buenísimo. Para entender mejor lo que buscás, ¿querés sacar el auto rápido o con financiación?";
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
             return respuesta;
+        } else {
+            // Si no detecta modelo, preguntar
+            const respuesta = "Hola, soy Martín, asesor de SURFRANCE. ¿Qué modelo te interesa? Tenemos 208, 2008, Partner y Expert.";
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
         }
     }
     
@@ -167,7 +196,6 @@ async function procesarMensaje(userMessage, userId) {
     // 6b. CALIFICACIÓN - DETECTAR INTENCIÓN
     // ============================================================
     if (cliente.etapa === 'calificacion') {
-        // Si dice "rápido" o similar
         if (contienePalabra(userMessage, flujo.palabras_clave?.rapido || [])) {
             cliente.tipo_cliente = 'rapido';
             cliente.etapa = 'rapido_precio';
@@ -178,7 +206,6 @@ async function procesarMensaje(userMessage, userId) {
             return respuesta;
         }
         
-        // Si dice "financiación" o similar
         if (contienePalabra(userMessage, flujo.palabras_clave?.financiacion || [])) {
             cliente.tipo_cliente = 'financiacion';
             cliente.etapa = 'financiacion_explicacion';
@@ -187,7 +214,6 @@ async function procesarMensaje(userMessage, userId) {
             return respuestaIA;
         }
         
-        // Si no detecta intención clara
         const respuesta = "Entendido. Decime, ¿estás buscando comprar al contado o necesitás financiación?";
         cliente.historial.push({ rol: 'martin', mensaje: respuesta });
         return respuesta;
@@ -197,7 +223,6 @@ async function procesarMensaje(userMessage, userId) {
     // 6c. RÁPIDO - PRECIO DADO
     // ============================================================
     if (cliente.etapa === 'rapido_precio') {
-        // Si confirma la compra
         if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
             cliente.etapa = 'rapido_cierre';
             const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con la venta directa. Te contacta al toque.";
@@ -205,16 +230,13 @@ async function procesarMensaje(userMessage, userId) {
             return respuesta;
         }
         
-        // Si dice que es caro
         if (contienePalabra(userMessage, flujo.palabras_clave?.rechazo_precio || [])) {
             const respuesta = "Entiendo. También tenemos financiación de fábrica con un plan 70/30. ¿Te parece si te explico cómo funciona?";
             cliente.etapa = 'calificacion';
-            // Forzar a que el cliente elija financiación
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
             return respuesta;
         }
         
-        // Cualquier otra respuesta, usar IA
         const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente preguntó sobre el precio. Respondé y preguntá si le sirve.');
         cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
         return respuestaIA;
@@ -231,7 +253,6 @@ async function procesarMensaje(userMessage, userId) {
     }
     
     if (cliente.etapa === 'financiacion_detalle') {
-        // Si el cliente quiere avanzar
         if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
             cliente.etapa = 'financiacion_cierre';
             const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con los papeles. Te contacta al toque.";
@@ -239,7 +260,6 @@ async function procesarMensaje(userMessage, userId) {
             return respuesta;
         }
         
-        // Si pide más info, usar IA
         const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente pidió más información sobre el plan de financiación. Respondé con claridad.');
         cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
         return respuestaIA;
