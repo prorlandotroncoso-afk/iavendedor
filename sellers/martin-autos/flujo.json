@@ -1,0 +1,52 @@
+{
+  "etapas": {
+    "presentacion": {
+      "descripcion": "Saludo y detección de modelo",
+      "siguiente": "calificacion"
+    },
+    "calificacion": {
+      "descripcion": "Preguntar si quiere rápido o financiación",
+      "siguiente": null
+    },
+    "rapido_precio": {
+      "descripcion": "Dar el precio y preguntar si le sirve",
+      "siguiente": null
+    },
+    "rapido_cierre": {
+      "descripcion": "Derivar a Edgardo para venta directa",
+      "siguiente": null
+    },
+    "financiacion_explicacion": {
+      "descripcion": "Explicar el plan 70/30",
+      "siguiente": "financiacion_detalle"
+    },
+    "financiacion_detalle": {
+      "descripcion": "Explicar cuotas, entrega y requisitos",
+      "siguiente": "financiacion_cierre"
+    },
+    "financiacion_cierre": {
+      "descripcion": "Derivar a Edgardo para papeles",
+      "siguiente": null
+    }
+  },
+  "palabras_clave": {
+    "rapido": ["rápido", "contado", "efectivo", "al contado"],
+    "financiacion": ["financiación", "ahorro", "cuota", "plan"],
+    "confirmacion_compra": ["sí", "me gusta", "lo quiero", "me interesa", "cómo hago", "quiero avanzar"],
+    "rechazo_precio": ["caro", "no llego", "muy caro", "no me alcanza"]
+  },
+  "objeciones": {
+    "pedir_detalle": {
+      "detectar": ["detalle", "pdf", "ficha", "especificaciones"],
+      "respuesta": "Dale, te paso el link con el detalle completo: [ENVIO_PDF]"
+    }
+  },
+  "envio_pdf": {
+    "activo": true,
+    "url_base": "https://tu-app.onrender.com/pdfs/",
+    "modelos": {
+      "208": "208_allure_am25.pdf",
+      "2008": "2008_allure.pdf"
+    }
+  }
+}
