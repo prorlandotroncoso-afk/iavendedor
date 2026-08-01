@@ -8,9 +8,9 @@ export function humanizarRespuesta(texto) {
         return texto;
     }
     
-    // 20% de probabilidad de agregar muletilla (solo si no es un saludo)
-    if (Math.random() < 0.2 && !texto.startsWith('Hola') && !texto.startsWith('Buen')) {
-        const muletillas = ['Mirá, ', 'Básicamente ', 'La cuestión es que '];
+    // 15% de probabilidad de agregar muletilla (solo si no es un saludo)
+    if (Math.random() < 0.15 && !texto.startsWith('Hola') && !texto.startsWith('Buen')) {
+        const muletillas = ['Mirá, ', 'Básicamente '];
         const elegida = muletillas[Math.floor(Math.random() * muletillas.length)];
         texto = elegida + texto.toLowerCase();
         texto = texto.charAt(0).toUpperCase() + texto.slice(1);
