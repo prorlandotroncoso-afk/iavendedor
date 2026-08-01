@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MOTOR MODULAR DE MARTIN CON MANUAL DE OPERACIONES
+// index.js - MOTOR MODULAR DE MARTIN CON FILTRO DE NATURALIDAD
 // ============================================================
 
 import express from 'express';
@@ -54,20 +54,69 @@ if (manual) {
 }
 
 // ============================================================
-// 3. GROQ
+// 3. FILTRO DE NATURALIDAD - Corrige preguntas forzadas
+// ============================================================
+function filtrarPreguntasForzadas(texto) {
+    // Si la respuesta contiene preguntas de cierre forzado, las reemplazamos
+    if (texto.includes("¿Querés avanzar con la compra") || 
+        texto.includes("¿Necesitás algo más") ||
+        texto.includes("¿Querés seguir adelante") ||
+        texto.includes("¿Qué más querés saber")) {
+        
+        texto = texto.replace(
+            /¿Querés avanzar con la compra o necesitás más información\?/g,
+            "Es un vehículo muy buscado. Te puedo contar también sobre las cuotas, son muy accesibles."
+        );
+        
+        texto = texto.replace(
+            /¿Qué más querés saber sobre este modelo\?/g,
+            "También te puedo contar sobre las cuotas, son muy accesibles y el plan se adapta a tu presupuesto."
+        );
+        
+        texto = texto.replace(
+            /¿Necesitás algo más o querés seguir adelante con el proceso\?/g,
+            "En qué más te puedo ayudar."
+        );
+        
+        texto = texto.replace(
+            /¿Necesitás algo más\?/g,
+            "En qué más te puedo ayudar."
+        );
+    }
+    
+    // Si la respuesta contiene "Disculpame, te conté un poco más de lo que pediste", la suavizamos
+    if (texto.includes("Disculpame, te conté un poco más de lo que pediste")) {
+        texto = texto.replace(
+            /Disculpame, te conté un poco más de lo que pediste\./g,
+            "Te cuento también sobre el financiamiento, es bastante accesible."
+        );
+    }
+    
+    // Si la respuesta contiene "¿Querés avanzar?" lo reemplazamos
+    if (texto.includes("¿Querés avanzar")) {
+        texto = texto.replace(
+            /¿Querés avanzar\?/g,
+            "También te puedo orientar sobre el proceso de financiación."
+        );
+    }
+    
+    return texto;
+}
+
+// ============================================================
+// 4. GROQ
 // ============================================================
 const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
 });
 
 // ============================================================
-// 4. CONVERSACIONES
+// 5. CONVERSACIONES
 // ============================================================
 const conversations = {};
 
 function getConversation(userId) {
     if (!conversations[userId]) {
-        // Crear el sistema con prompt + manual
         let systemContent = seller.prompt;
         if (manual) {
             systemContent += `\n\nMANUAL DE OPERACIONES:\n${manual}`;
@@ -80,7 +129,7 @@ function getConversation(userId) {
 }
 
 // ============================================================
-// 5. DETECCIÓN DE CAMPAÑA
+// 6. DETECCIÓN DE CAMPAÑA
 // ============================================================
 function detectCampaign(message, campaigns) {
     const text = message.toLowerCase();
@@ -102,7 +151,7 @@ function detectCampaign(message, campaigns) {
 }
 
 // ============================================================
-// 6. PROCESAR MENSAJE
+// 7. PROCESAR MENSAJE
 // ============================================================
 async function procesarMensaje(userMessage, userId) {
     const conv = getConversation(userId);
@@ -137,6 +186,9 @@ async function procesarMensaje(userMessage, userId) {
         
         let botReply = response.choices[0].message.content;
         
+        // APLICAR FILTRO DE NATURALIDAD
+        botReply = filtrarPreguntasForzadas(botReply);
+        
         // Humanizar solo si no es un saludo corto
         if (!botReply.startsWith('Hola') && !botReply.startsWith('Buen')) {
             botReply = humanizarRespuesta(botReply);
@@ -166,7 +218,7 @@ async function procesarMensaje(userMessage, userId) {
 }
 
 // ============================================================
-// 7. ENDPOINTS
+// 8. ENDPOINTS
 // ============================================================
 app.post('/chat', async (req, res) => {
     const { message, userId } = req.body;
@@ -190,7 +242,7 @@ app.post('/save-campaign', (req, res) => {
 });
 
 // ============================================================
-// 8. INICIO
+// 9. INICIO
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
