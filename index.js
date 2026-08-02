@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MARTIN VERSIÓN DEFINITIVA (CON MANEJO DE HOLAS)
+// index.js - MARTIN VERSIÓN DEFINITIVA (CON LOGS)
 // ============================================================
 
 import express from 'express';
@@ -28,7 +28,7 @@ if (fs.existsSync(flujoPath)) {
     flujo = JSON.parse(fs.readFileSync(flujoPath, 'utf-8'));
     console.log('✅ flujo.json cargado');
 } else {
-    console.error('❌ flujo.json no encontrado');
+    console.error('❌ flujo.json no encontrado en:', flujoPath);
     process.exit(1);
 }
 
@@ -38,7 +38,7 @@ if (fs.existsSync(campaignsPath)) {
     campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
     console.log('✅ campaigns.json cargado');
 } else {
-    console.error('❌ campaigns.json no encontrado');
+    console.error('❌ campaigns.json no encontrado en:', campaignsPath);
     process.exit(1);
 }
 
@@ -56,6 +56,7 @@ const clientes = {};
 
 function getCliente(userId) {
     if (!clientes[userId]) {
+        console.log('🆕 Nuevo cliente:', userId);
         clientes[userId] = {
             etapa: 'presentacion',
             modelo: null,
@@ -83,6 +84,7 @@ function detectarModelo(mensaje) {
         }
         for (const palabra of palabrasClave) {
             if (texto.includes(palabra)) {
+                console.log('🔍 Modelo detectado:', key, 'por:', palabra);
                 return key;
             }
         }
@@ -101,9 +103,10 @@ function obtenerLinkPDF(modeloKey) {
 }
 
 function contienePalabra(mensaje, lista) {
+    if (!lista) return false;
     const texto = mensaje.toLowerCase();
     for (const palabra of lista) {
-        if (texto.includes(palabra)) {
+        if (texto.includes(palabra.toLowerCase())) {
             return true;
         }
     }
@@ -165,11 +168,14 @@ RESPUESTA:
 }
 
 // ============================================================
-// 6. PROCESAR MENSAJE
+// 6. PROCESAR MENSAJE (CON LOGS Y RETURN POR DEFECTO)
 // ============================================================
 async function procesarMensaje(userMessage, userId) {
+    console.log('📩 Mensaje:', userMessage, '| Usuario:', userId);
+    
     const cliente = getCliente(userId);
-    const campaign = obtenerCampaign(cliente.modelo);
+    console.log('📍 Etapa actual:', cliente.etapa);
+    console.log('📍 Modelo actual:', cliente.modelo);
     
     cliente.historial.push({ rol: 'cliente', mensaje: userMessage });
     
@@ -177,17 +183,21 @@ async function procesarMensaje(userMessage, userId) {
     // 6a. PRIMER MENSAJE - DETECTAR MODELO
     // ============================================================
     if (cliente.etapa === 'presentacion') {
+        console.log('🔄 Entrando a presentacion...');
         const modelo = detectarModelo(userMessage);
+        console.log('🔄 Modelo detectado:', modelo);
+        
         if (modelo) {
             cliente.modelo = modelo;
             cliente.etapa = 'calificacion';
             const respuesta = "Buenísimo. Para entender mejor lo que buscás, ¿querés sacar el auto rápido o con financiación?";
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta:', respuesta);
             return respuesta;
         } else {
-            // Si no detecta modelo, preguntar
             const respuesta = "Hola, soy Martín, asesor de SURFRANCE. ¿Qué modelo te interesa? Tenemos 208, 2008, Partner y Expert.";
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta (sin modelo):', respuesta);
             return respuesta;
         }
     }
@@ -196,13 +206,17 @@ async function procesarMensaje(userMessage, userId) {
     // 6b. CALIFICACIÓN - DETECTAR INTENCIÓN
     // ============================================================
     if (cliente.etapa === 'calificacion') {
+        console.log('🔄 Entrando a calificacion...');
+        
         if (contienePalabra(userMessage, flujo.palabras_clave?.rapido || [])) {
             cliente.tipo_cliente = 'rapido';
             cliente.etapa = 'rapido_precio';
+            const campaign = obtenerCampaign(cliente.modelo);
             const precio = campaign?.precioLista || '$XX.XXX.XXX';
             const modelo = campaign?.modelo || cliente.modelo;
             const respuesta = `Excelente. El precio de lista del ${modelo} es de ${precio}. ¿Te sirve?`;
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta (rápido):', respuesta);
             return respuesta;
         }
         
@@ -211,11 +225,13 @@ async function procesarMensaje(userMessage, userId) {
             cliente.etapa = 'financiacion_explicacion';
             const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'Explicá el plan 70/30 de forma clara y natural.');
             cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
+            console.log('✅ Respuesta (financiación):', respuestaIA);
             return respuestaIA;
         }
         
         const respuesta = "Entendido. Decime, ¿estás buscando comprar al contado o necesitás financiación?";
         cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        console.log('✅ Respuesta (calificación genérica):', respuesta);
         return respuesta;
     }
     
@@ -223,10 +239,13 @@ async function procesarMensaje(userMessage, userId) {
     // 6c. RÁPIDO - PRECIO DADO
     // ============================================================
     if (cliente.etapa === 'rapido_precio') {
+        console.log('🔄 Entrando a rapido_precio...');
+        
         if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
             cliente.etapa = 'rapido_cierre';
             const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con la venta directa. Te contacta al toque.";
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta (confirmación):', respuesta);
             return respuesta;
         }
         
@@ -234,11 +253,13 @@ async function procesarMensaje(userMessage, userId) {
             const respuesta = "Entiendo. También tenemos financiación de fábrica con un plan 70/30. ¿Te parece si te explico cómo funciona?";
             cliente.etapa = 'calificacion';
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta (rechazo):', respuesta);
             return respuesta;
         }
         
         const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente preguntó sobre el precio. Respondé y preguntá si le sirve.');
         cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
+        console.log('✅ Respuesta (IA - rápido):', respuestaIA);
         return respuestaIA;
     }
     
@@ -246,22 +267,28 @@ async function procesarMensaje(userMessage, userId) {
     // 6d. FINANCIACIÓN - EXPLICACIÓN DEL PLAN
     // ============================================================
     if (cliente.etapa === 'financiacion_explicacion') {
+        console.log('🔄 Entrando a financiacion_explicacion...');
         cliente.etapa = 'financiacion_detalle';
         const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente está interesado en financiación. Explicá las cuotas, la entrega asegurada y los requisitos.');
         cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
+        console.log('✅ Respuesta (IA - financiación):', respuestaIA);
         return respuestaIA;
     }
     
     if (cliente.etapa === 'financiacion_detalle') {
+        console.log('🔄 Entrando a financiacion_detalle...');
+        
         if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
             cliente.etapa = 'financiacion_cierre';
             const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con los papeles. Te contacta al toque.";
             cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            console.log('✅ Respuesta (confirmación financiación):', respuesta);
             return respuesta;
         }
         
         const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente pidió más información sobre el plan de financiación. Respondé con claridad.');
         cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
+        console.log('✅ Respuesta (IA - detalle financiación):', respuestaIA);
         return respuestaIA;
     }
     
@@ -270,6 +297,7 @@ async function procesarMensaje(userMessage, userId) {
     // ============================================================
     const objecion = detectarObjecion(userMessage);
     if (objecion) {
+        console.log('🔄 Entrando a objecion:', objecion.key);
         let respuesta = objecion.respuesta;
         if (objecion.key === 'pedir_detalle') {
             const linkPDF = obtenerLinkPDF(cliente.modelo);
@@ -278,15 +306,17 @@ async function procesarMensaje(userMessage, userId) {
                 'Dale, te paso el detalle completo. Ahora te lo envío.';
         }
         cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        console.log('✅ Respuesta (objeción):', respuesta);
         return respuesta;
     }
     
     // ============================================================
-    // 6f. RESPUESTA POR DEFECTO (IA)
+    // 6f. RESPUESTA POR DEFECTO (NUNCA DEBE LLEGAR AQUÍ)
     // ============================================================
-    const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'Respondé al cliente de forma natural.');
-    cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
-    return respuestaIA;
+    console.log('⚠️ Llegó al final sin return. Usando respuesta por defecto.');
+    const respuestaDefault = "¿En qué más te puedo ayudar?";
+    cliente.historial.push({ rol: 'martin', mensaje: respuestaDefault });
+    return respuestaDefault;
 }
 
 // ============================================================
@@ -294,11 +324,13 @@ async function procesarMensaje(userMessage, userId) {
 // ============================================================
 app.post('/chat', async (req, res) => {
     const { message, userId } = req.body;
+    console.log('📩 POST /chat:', message, userId);
     try {
         const reply = await procesarMensaje(message, userId || 'web_user');
+        console.log('📤 Respuesta final:', reply);
         res.json({ reply });
     } catch (error) {
-        console.error(error);
+        console.error('❌ Error en /chat:', error);
         res.status(500).json({ error: 'Error procesando mensaje' });
     }
 });
@@ -308,6 +340,6 @@ app.post('/chat', async (req, res) => {
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 MARTIN - Versión definitiva`);
+    console.log(`🚀 MARTIN - Versión definitiva con logs`);
     console.log(`📂 Puerto: ${PORT}`);
 });
