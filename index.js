@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MARTIN VERSIÓN DEFINITIVA (CON LOGS)
+// index.js - MARTIN VERSIÓN DEFINITIVA (CORREGIDA)
 // ============================================================
 
 import express from 'express';
@@ -37,6 +37,12 @@ let campaigns = {};
 if (fs.existsSync(campaignsPath)) {
     campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
     console.log('✅ campaigns.json cargado');
+    // Verificar que todas las campañas tengan 'modelo'
+    for (const [key, campaign] of Object.entries(campaigns)) {
+        if (!campaign.modelo) {
+            console.warn(`⚠️ La campaña "${key}" no tiene el campo "modelo"`);
+        }
+    }
 } else {
     console.error('❌ campaigns.json no encontrado en:', campaignsPath);
     process.exit(1);
@@ -69,19 +75,38 @@ function getCliente(userId) {
 }
 
 // ============================================================
-// 4. FUNCIONES AUXILIARES
+// 4. FUNCIONES AUXILIARES (CORREGIDAS)
 // ============================================================
 function detectarModelo(mensaje) {
+    if (!mensaje || typeof mensaje !== 'string') {
+        console.log('⚠️ Mensaje vacío o inválido en detectarModelo');
+        return null;
+    }
+    
     const texto = mensaje.toLowerCase();
+    
     for (const [key, campaign] of Object.entries(campaigns)) {
-        const modelo = campaign.modelo.toLowerCase();
-        const palabrasClave = [key.toLowerCase(), modelo];
-        const partes = modelo.split(' ');
+        if (!campaign || typeof campaign !== 'object') {
+            console.log('⚠️ Campaña inválida para la clave:', key);
+            continue;
+        }
+        
+        const modelo = campaign.modelo;
+        if (!modelo || typeof modelo !== 'string') {
+            console.log('⚠️ Campo "modelo" faltante o inválido para:', key);
+            continue;
+        }
+        
+        const modeloLower = modelo.toLowerCase();
+        const palabrasClave = [key.toLowerCase(), modeloLower];
+        
+        const partes = modeloLower.split(' ');
         for (const parte of partes) {
             if (parte.length > 2) {
                 palabrasClave.push(parte);
             }
         }
+        
         for (const palabra of palabrasClave) {
             if (texto.includes(palabra)) {
                 console.log('🔍 Modelo detectado:', key, 'por:', palabra);
@@ -89,10 +114,12 @@ function detectarModelo(mensaje) {
             }
         }
     }
+    
     return null;
 }
 
 function obtenerCampaign(modeloKey) {
+    if (!modeloKey) return null;
     return campaigns[modeloKey] || null;
 }
 
@@ -103,7 +130,7 @@ function obtenerLinkPDF(modeloKey) {
 }
 
 function contienePalabra(mensaje, lista) {
-    if (!lista) return false;
+    if (!lista || !mensaje) return false;
     const texto = mensaje.toLowerCase();
     for (const palabra of lista) {
         if (texto.includes(palabra.toLowerCase())) {
@@ -168,7 +195,7 @@ RESPUESTA:
 }
 
 // ============================================================
-// 6. PROCESAR MENSAJE (CON LOGS Y RETURN POR DEFECTO)
+// 6. PROCESAR MENSAJE
 // ============================================================
 async function procesarMensaje(userMessage, userId) {
     console.log('📩 Mensaje:', userMessage, '| Usuario:', userId);
@@ -311,7 +338,7 @@ async function procesarMensaje(userMessage, userId) {
     }
     
     // ============================================================
-    // 6f. RESPUESTA POR DEFECTO (NUNCA DEBE LLEGAR AQUÍ)
+    // 6f. RESPUESTA POR DEFECTO
     // ============================================================
     console.log('⚠️ Llegó al final sin return. Usando respuesta por defecto.');
     const respuestaDefault = "¿En qué más te puedo ayudar?";
@@ -340,6 +367,6 @@ app.post('/chat', async (req, res) => {
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 MARTIN - Versión definitiva con logs`);
+    console.log(`🚀 MARTIN - Versión definitiva`);
     console.log(`📂 Puerto: ${PORT}`);
 });

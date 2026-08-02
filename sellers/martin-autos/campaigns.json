@@ -1,82 +1,30 @@
 {
   "208": {
-    "modelo": "208 Allure AM25",
-    "concesionario": "SURFRANCE",
-    "ubicacion": "Godoy Cruz, Mendoza",
-    "activo": true,
-
+    "modelo": "Peugeot 208 Allure AM25",
     "precioLista": "$35.530.000",
     "plan": "70/30",
-    "plazo": "84 cuotas",
-    "anticipo": "30%",
-    "entrega": "Adjudicación asegurada",
-
-    "suscripcion": "$296.083",
-    "cuotaPura": "$274.907",
-    "cuotaPublicitaria": "$463.626",
-
-    "adjudicacion": "Sorteo o licitación",
-    "entregaAsegurada": "Cuotas 2, 6, 9 y 12 integrando el 30%",
-
-    "materialComercial": "",
-    "pdfFichaTecnica": "",
-    "videoComercial": "",
-    "imagenPrincipal": "",
-
-    "usaUsado": true,
-    "soloDNI": true,
-
-    "vigencia": "01/12/2025",
-
-    "observaciones": "Plan de ahorro oficial Peugeot financiado directamente de fábrica.",
-
-    "cuotas": [
-      {
-        "desde": 2,
-        "hasta": 12,
-        "valor": "$463.626"
-      },
-      {
-        "desde": 13,
-        "hasta": 13,
-        "valor": "$444.095"
-      },
-      {
-        "desde": 14,
-        "hasta": 18,
-        "valor": "$349.289"
-      },
-      {
-        "desde": 19,
-        "hasta": 25,
-        "valor": "$380.631"
-      },
-      {
-        "desde": 26,
-        "hasta": 42,
-        "valor": "$400.220"
-      },
-      {
-        "desde": 43,
-        "hasta": 84,
-        "valor": "$380.631"
-      }
-    ],
-
-    "equipamiento": [
-      "Climatizador automático",
-      "ESP",
-      "ABS",
-      "Pantalla táctil",
-      "Android Auto",
-      "Apple CarPlay",
-      "Cámara de retroceso"
-    ]
+    "porcentaje_integracion": "30%",
+    "porcentaje_entrega": "10%",
+    "gastos_entrega": "12%",
+    "monto_10_porciento": "$4.000.000",
+    "cuota_1": "$200.000",
+    "cuotas_entrega": "2, 4, 6, 8 o 12",
+    "requisitos": "DNI",
+    "concesionario": "SURFRANCE",
+    "ubicacion": "Godoy Cruz, Mendoza"
   },
-
-  "2008": {},
-
-  "partner": {},
-
-  "expert": {}
+  "2008": {
+    "modelo": "Peugeot 2008 Allure",
+    "precioLista": "$50.020.000",
+    "plan": "70/30",
+    "porcentaje_integracion": "30%",
+    "porcentaje_entrega": "10%",
+    "gastos_entrega": "12%",
+    "monto_10_porciento": "$5.500.000",
+    "cuota_1": "$250.000",
+    "cuotas_entrega": "2, 4, 6, 8 o 12",
+    "requisitos": "DNI",
+    "concesionario": "SURFRANCE",
+    "ubicacion": "Godoy Cruz, Mendoza"
+  }
 }
