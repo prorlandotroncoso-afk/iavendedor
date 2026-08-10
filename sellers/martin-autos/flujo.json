@@ -3,8 +3,8 @@
     "saludo": {
       "frase": [
         "Hola, ¿en qué te puedo ayudar?",
-        "Buen día, ¿cómo te puedo asistir?",
-        "Hola, ¿qué necesitás saber?"
+        "Hola, que tal ¿contame en que te puedo ayudar?",
+        "Hola, ¿como te puedo ayudar?"
       ],
       "siguiente": "modelo"
     },

@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MARTIN ASISTENTE 24/7
+// index.js - MARTIN ASISTENTE 24/7 (CORREGIDO)
 // ============================================================
 
 import express from 'express';
@@ -244,10 +244,12 @@ async function procesarMensaje(userMessage, userId) {
         return respuesta;
     }
 
-    // Derivación (final)
+    // Derivación (final) - CORREGIDO: reinicia la etapa a 'saludo'
     if (etapaActual === 'derivacion') {
         const respuesta = 'Ya te contacta Edgardo. ¡Gracias por comunicarte!';
         cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        // Reiniciar la etapa para que pueda seguir conversando
+        cliente.etapa = 'saludo';
         return respuesta;
     }
 
@@ -276,7 +278,7 @@ app.post('/chat', async (req, res) => {
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 MARTIN - Asistente 24/7`);
+    console.log(`🚀 MARTIN - Asistente 24/7 (corregido)`);
     console.log(`📂 Puerto: ${PORT}`);
     console.log(`📋 Etapas: ${Object.keys(flujo.etapas).length}`);
     console.log(`🛡️ Objeciones: ${Object.keys(flujo.objeciones || {}).length}`);
