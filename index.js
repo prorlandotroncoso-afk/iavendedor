@@ -1,5 +1,5 @@
 // ============================================================
-// index.js - MARTIN VERSIÓN DEFINITIVA (CORREGIDA)
+// index.js - MARTIN ASISTENTE 24/7
 // ============================================================
 
 import express from 'express';
@@ -23,51 +23,24 @@ app.use(express.static('public'));
 // 1. CARGAR CONFIGURACIÓN
 // ============================================================
 const flujoPath = path.join(__dirname, 'sellers', 'martin-autos', 'flujo.json');
-let flujo = {};
-if (fs.existsSync(flujoPath)) {
-    flujo = JSON.parse(fs.readFileSync(flujoPath, 'utf-8'));
-    console.log('✅ flujo.json cargado');
-} else {
-    console.error('❌ flujo.json no encontrado en:', flujoPath);
-    process.exit(1);
-}
+let flujo = JSON.parse(fs.readFileSync(flujoPath, 'utf-8'));
 
 const campaignsPath = path.join(__dirname, 'sellers', 'martin-autos', 'campaigns.json');
-let campaigns = {};
-if (fs.existsSync(campaignsPath)) {
-    campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
-    console.log('✅ campaigns.json cargado');
-    // Verificar que todas las campañas tengan 'modelo'
-    for (const [key, campaign] of Object.entries(campaigns)) {
-        if (!campaign.modelo) {
-            console.warn(`⚠️ La campaña "${key}" no tiene el campo "modelo"`);
-        }
-    }
-} else {
-    console.error('❌ campaigns.json no encontrado en:', campaignsPath);
-    process.exit(1);
-}
+let campaigns = JSON.parse(fs.readFileSync(campaignsPath, 'utf-8'));
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ============================================================
-// 2. GROQ (IA)
-// ============================================================
-const groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY,
-});
-
-// ============================================================
-// 3. ESTADO DE CLIENTES
+// 2. ESTADO DE CLIENTES
 // ============================================================
 const clientes = {};
 
 function getCliente(userId) {
     if (!clientes[userId]) {
-        console.log('🆕 Nuevo cliente:', userId);
         clientes[userId] = {
-            etapa: 'presentacion',
+            etapa: 'saludo',
             modelo: null,
-            tipo_cliente: null,
-            oferta_aceptada: false,
+            metodo: null,
             historial: []
         };
     }
@@ -75,62 +48,14 @@ function getCliente(userId) {
 }
 
 // ============================================================
-// 4. FUNCIONES AUXILIARES (CORREGIDAS)
+// 3. FUNCIONES AUXILIARES
 // ============================================================
-function detectarModelo(mensaje) {
-    if (!mensaje || typeof mensaje !== 'string') {
-        console.log('⚠️ Mensaje vacío o inválido en detectarModelo');
-        return null;
-    }
-    
-    const texto = mensaje.toLowerCase();
-    
-    for (const [key, campaign] of Object.entries(campaigns)) {
-        if (!campaign || typeof campaign !== 'object') {
-            console.log('⚠️ Campaña inválida para la clave:', key);
-            continue;
-        }
-        
-        const modelo = campaign.modelo;
-        if (!modelo || typeof modelo !== 'string') {
-            console.log('⚠️ Campo "modelo" faltante o inválido para:', key);
-            continue;
-        }
-        
-        const modeloLower = modelo.toLowerCase();
-        const palabrasClave = [key.toLowerCase(), modeloLower];
-        
-        const partes = modeloLower.split(' ');
-        for (const parte of partes) {
-            if (parte.length > 2) {
-                palabrasClave.push(parte);
-            }
-        }
-        
-        for (const palabra of palabrasClave) {
-            if (texto.includes(palabra)) {
-                console.log('🔍 Modelo detectado:', key, 'por:', palabra);
-                return key;
-            }
-        }
-    }
-    
-    return null;
-}
-
-function obtenerCampaign(modeloKey) {
-    if (!modeloKey) return null;
-    return campaigns[modeloKey] || null;
-}
-
-function obtenerLinkPDF(modeloKey) {
-    if (!flujo.envio_pdf?.activo) return null;
-    const archivo = flujo.envio_pdf.modelos[modeloKey];
-    return archivo ? `${flujo.envio_pdf.url_base}${archivo}` : null;
+function elegirFrase(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function contienePalabra(mensaje, lista) {
-    if (!lista || !mensaje) return false;
+    if (!lista) return false;
     const texto = mensaje.toLowerCase();
     for (const palabra of lista) {
         if (texto.includes(palabra.toLowerCase())) {
@@ -138,6 +63,16 @@ function contienePalabra(mensaje, lista) {
         }
     }
     return false;
+}
+
+function detectarModelo(mensaje) {
+    const texto = mensaje.toLowerCase();
+    for (const [key] of Object.entries(campaigns)) {
+        if (texto.includes(key.toLowerCase())) {
+            return key;
+        }
+    }
+    return null;
 }
 
 function detectarObjecion(mensaje) {
@@ -152,32 +87,23 @@ function detectarObjecion(mensaje) {
     return null;
 }
 
+function obtenerLinkPDF(modeloKey) {
+    if (!flujo.envio_pdf?.activo) return null;
+    const archivo = flujo.envio_pdf.modelos[modeloKey];
+    return archivo ? `${flujo.envio_pdf.url_base}${archivo}` : null;
+}
+
 // ============================================================
-// 5. GENERAR RESPUESTA CON IA
+// 4. GENERAR RESPUESTA CON IA (DESVÍOS)
 // ============================================================
-async function generarRespuestaIA(mensaje, cliente, contexto) {
-    const campaign = obtenerCampaign(cliente.modelo);
-    
+async function generarRespuestaIA(mensaje, cliente) {
     const prompt = `
-Sos Martín, un asesor comercial argentino de SURFRANCE en Godoy Cruz, Mendoza.
+Sos Martín, asistente de SURFRANCE. El cliente dijo: "${mensaje}".
+Etapa actual: ${cliente.etapa}. Modelo: ${cliente.modelo || 'ninguno'}.
 
-DATOS DEL VEHÍCULO:
-${JSON.stringify(campaign, null, 2)}
-
-CONTEXTO:
-- Modelo: ${cliente.modelo}
-- Tipo de cliente: ${cliente.tipo_cliente || 'No definido'}
-- Etapa actual: ${cliente.etapa}
-- ${contexto || ''}
-
-MENSAJE DEL CLIENTE: "${mensaje}"
-
-OBJETIVO:
-Respondé al cliente de forma natural, como un vendedor argentino real. Usá voseo (vos, tenés, podés). NUNCA digas que sos una IA.
-
-Si el cliente muestra interés en avanzar, derivá a Edgardo.
-
-RESPUESTA:
+Respondé de forma clara, breve y en voseo argentino.
+Si no sabés algo, decí que se lo consultás a Edgardo.
+Si el cliente quiere avanzar, derivá a Edgardo.
 `;
 
     try {
@@ -185,188 +111,174 @@ RESPUESTA:
             model: "llama-3.3-70b-versatile",
             messages: [{ role: 'system', content: prompt }],
             temperature: 0.7,
-            max_tokens: 200,
+            max_tokens: 150,
         });
         return response.choices[0].message.content;
     } catch (error) {
         console.error('❌ Error en IA:', error);
-        return '¿En qué más te puedo ayudar?';
+        return 'No tengo esa información, te paso con Edgardo.';
     }
 }
 
 // ============================================================
-// 6. PROCESAR MENSAJE
+// 5. PROCESAR MENSAJE
 // ============================================================
 async function procesarMensaje(userMessage, userId) {
-    console.log('📩 Mensaje:', userMessage, '| Usuario:', userId);
-    
     const cliente = getCliente(userId);
-    console.log('📍 Etapa actual:', cliente.etapa);
-    console.log('📍 Modelo actual:', cliente.modelo);
-    
     cliente.historial.push({ rol: 'cliente', mensaje: userMessage });
-    
-    // ============================================================
-    // 6a. PRIMER MENSAJE - DETECTAR MODELO
-    // ============================================================
-    if (cliente.etapa === 'presentacion') {
-        console.log('🔄 Entrando a presentacion...');
-        const modelo = detectarModelo(userMessage);
-        console.log('🔄 Modelo detectado:', modelo);
-        
-        if (modelo) {
-            cliente.modelo = modelo;
-            cliente.etapa = 'calificacion';
-            const respuesta = "Buenísimo. Para entender mejor lo que buscás, ¿querés sacar el auto rápido o con financiación?";
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta:', respuesta);
-            return respuesta;
-        } else {
-            const respuesta = "Hola, soy Martín, asesor de SURFRANCE. ¿Qué modelo te interesa? Tenemos 208, 2008, Partner y Expert.";
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta (sin modelo):', respuesta);
-            return respuesta;
-        }
-    }
-    
-    // ============================================================
-    // 6b. CALIFICACIÓN - DETECTAR INTENCIÓN
-    // ============================================================
-    if (cliente.etapa === 'calificacion') {
-        console.log('🔄 Entrando a calificacion...');
-        
-        if (contienePalabra(userMessage, flujo.palabras_clave?.rapido || [])) {
-            cliente.tipo_cliente = 'rapido';
-            cliente.etapa = 'rapido_precio';
-            const campaign = obtenerCampaign(cliente.modelo);
-            const precio = campaign?.precioLista || '$XX.XXX.XXX';
-            const modelo = campaign?.modelo || cliente.modelo;
-            const respuesta = `Excelente. El precio de lista del ${modelo} es de ${precio}. ¿Te sirve?`;
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta (rápido):', respuesta);
-            return respuesta;
-        }
-        
-        if (contienePalabra(userMessage, flujo.palabras_clave?.financiacion || [])) {
-            cliente.tipo_cliente = 'financiacion';
-            cliente.etapa = 'financiacion_explicacion';
-            const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'Explicá el plan 70/30 de forma clara y natural.');
-            cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
-            console.log('✅ Respuesta (financiación):', respuestaIA);
-            return respuestaIA;
-        }
-        
-        const respuesta = "Entendido. Decime, ¿estás buscando comprar al contado o necesitás financiación?";
-        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-        console.log('✅ Respuesta (calificación genérica):', respuesta);
-        return respuesta;
-    }
-    
-    // ============================================================
-    // 6c. RÁPIDO - PRECIO DADO
-    // ============================================================
-    if (cliente.etapa === 'rapido_precio') {
-        console.log('🔄 Entrando a rapido_precio...');
-        
-        if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
-            cliente.etapa = 'rapido_cierre';
-            const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con la venta directa. Te contacta al toque.";
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta (confirmación):', respuesta);
-            return respuesta;
-        }
-        
-        if (contienePalabra(userMessage, flujo.palabras_clave?.rechazo_precio || [])) {
-            const respuesta = "Entiendo. También tenemos financiación de fábrica con un plan 70/30. ¿Te parece si te explico cómo funciona?";
-            cliente.etapa = 'calificacion';
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta (rechazo):', respuesta);
-            return respuesta;
-        }
-        
-        const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente preguntó sobre el precio. Respondé y preguntá si le sirve.');
-        cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
-        console.log('✅ Respuesta (IA - rápido):', respuestaIA);
-        return respuestaIA;
-    }
-    
-    // ============================================================
-    // 6d. FINANCIACIÓN - EXPLICACIÓN DEL PLAN
-    // ============================================================
-    if (cliente.etapa === 'financiacion_explicacion') {
-        console.log('🔄 Entrando a financiacion_explicacion...');
-        cliente.etapa = 'financiacion_detalle';
-        const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente está interesado en financiación. Explicá las cuotas, la entrega asegurada y los requisitos.');
-        cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
-        console.log('✅ Respuesta (IA - financiación):', respuestaIA);
-        return respuestaIA;
-    }
-    
-    if (cliente.etapa === 'financiacion_detalle') {
-        console.log('🔄 Entrando a financiacion_detalle...');
-        
-        if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion_compra || [])) {
-            cliente.etapa = 'financiacion_cierre';
-            const respuesta = "Genial. Te paso con Edgardo, él te va a ayudar con los papeles. Te contacta al toque.";
-            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-            console.log('✅ Respuesta (confirmación financiación):', respuesta);
-            return respuesta;
-        }
-        
-        const respuestaIA = await generarRespuestaIA(userMessage, cliente, 'El cliente pidió más información sobre el plan de financiación. Respondé con claridad.');
-        cliente.historial.push({ rol: 'martin', mensaje: respuestaIA });
-        console.log('✅ Respuesta (IA - detalle financiación):', respuestaIA);
-        return respuestaIA;
-    }
-    
-    // ============================================================
-    // 6e. DETECTAR OBJECIÓN
-    // ============================================================
+
+    // 1. Detectar objeción
     const objecion = detectarObjecion(userMessage);
     if (objecion) {
-        console.log('🔄 Entrando a objecion:', objecion.key);
         let respuesta = objecion.respuesta;
         if (objecion.key === 'pedir_detalle') {
-            const linkPDF = obtenerLinkPDF(cliente.modelo);
-            respuesta = linkPDF ? 
-                `Dale, te paso el link con el detalle completo: ${linkPDF}` : 
-                'Dale, te paso el detalle completo. Ahora te lo envío.';
+            const link = obtenerLinkPDF(cliente.modelo);
+            respuesta = link ? `Dale, te paso el link: ${link}` : 'Dale, te paso el detalle.';
         }
         cliente.historial.push({ rol: 'martin', mensaje: respuesta });
-        console.log('✅ Respuesta (objeción):', respuesta);
         return respuesta;
     }
-    
-    // ============================================================
-    // 6f. RESPUESTA POR DEFECTO
-    // ============================================================
-    console.log('⚠️ Llegó al final sin return. Usando respuesta por defecto.');
-    const respuestaDefault = "¿En qué más te puedo ayudar?";
+
+    // 2. Seguir el flujo
+    const etapaActual = cliente.etapa;
+    const etapaData = flujo.etapas[etapaActual];
+    if (!etapaData) {
+        const respuesta = 'No tengo esa información, te paso con Edgardo.';
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Saludo
+    if (etapaActual === 'saludo') {
+        cliente.etapa = 'modelo';
+        const respuesta = elegirFrase(etapaData.frase);
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Modelo
+    if (etapaActual === 'modelo') {
+        const modelo = detectarModelo(userMessage);
+        if (modelo) {
+            cliente.modelo = modelo;
+            cliente.etapa = 'metodo';
+            const respuesta = elegirFrase(flujo.etapas.metodo.frase);
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        const respuesta = 'No entendí qué modelo te interesa. Tenemos 208, 2008, Partner y Expert. ¿Cuál te llama?';
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Método
+    if (etapaActual === 'metodo') {
+        if (contienePalabra(userMessage, flujo.palabras_clave?.directa || [])) {
+            cliente.metodo = 'directa';
+            const respuesta = 'Perfecto. Te paso con Edgardo para la venta directa. Te contacta al toque.';
+            cliente.etapa = 'derivacion';
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        if (contienePalabra(userMessage, flujo.palabras_clave?.financiacion || [])) {
+            cliente.metodo = 'financiacion';
+            cliente.etapa = 'financiacion';
+            const respuesta = elegirFrase(flujo.etapas.financiacion.frase);
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        const respuesta = '¿Buscás adquisición directa o financiamiento de fábrica?';
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Financiación
+    if (etapaActual === 'financiacion') {
+        if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion || [])) {
+            cliente.etapa = 'requisitos';
+            const respuesta = elegirFrase(flujo.etapas.requisitos.frase);
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        const respuesta = '¿Te gustaría saber los requisitos para ingresar?';
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Requisitos
+    if (etapaActual === 'requisitos') {
+        if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion || [])) {
+            cliente.etapa = 'cierre';
+            const respuesta = elegirFrase(flujo.etapas.cierre.frase);
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        if (contienePalabra(userMessage, flujo.palabras_clave?.rechazo || [])) {
+            const respuesta = 'Dale, tomate tu tiempo. Si querés, te paso el detalle por PDF.';
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        const respuesta = elegirFrase(flujo.etapas.requisitos.frase);
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Cierre
+    if (etapaActual === 'cierre') {
+        if (contienePalabra(userMessage, flujo.palabras_clave?.confirmacion || [])) {
+            cliente.etapa = 'contacto';
+            const respuesta = elegirFrase(flujo.etapas.contacto.frase);
+            cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+            return respuesta;
+        }
+        const respuesta = elegirFrase(flujo.etapas.cierre.frase);
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Contacto
+    if (etapaActual === 'contacto') {
+        cliente.etapa = 'derivacion';
+        const respuesta = elegirFrase(flujo.etapas.derivacion.frase);
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Derivación (final)
+    if (etapaActual === 'derivacion') {
+        const respuesta = 'Ya te contacta Edgardo. ¡Gracias por comunicarte!';
+        cliente.historial.push({ rol: 'martin', mensaje: respuesta });
+        return respuesta;
+    }
+
+    // Respuesta por defecto
+    const respuestaDefault = '¿En qué más te puedo ayudar?';
     cliente.historial.push({ rol: 'martin', mensaje: respuestaDefault });
     return respuestaDefault;
 }
 
 // ============================================================
-// 7. ENDPOINTS
+// 6. ENDPOINTS
 // ============================================================
 app.post('/chat', async (req, res) => {
     const { message, userId } = req.body;
-    console.log('📩 POST /chat:', message, userId);
     try {
         const reply = await procesarMensaje(message, userId || 'web_user');
-        console.log('📤 Respuesta final:', reply);
         res.json({ reply });
     } catch (error) {
-        console.error('❌ Error en /chat:', error);
+        console.error(error);
         res.status(500).json({ error: 'Error procesando mensaje' });
     }
 });
 
 // ============================================================
-// 8. INICIO
+// 7. INICIO
 // ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 MARTIN - Versión definitiva`);
+    console.log(`🚀 MARTIN - Asistente 24/7`);
     console.log(`📂 Puerto: ${PORT}`);
+    console.log(`📋 Etapas: ${Object.keys(flujo.etapas).length}`);
+    console.log(`🛡️ Objeciones: ${Object.keys(flujo.objeciones || {}).length}`);
+    console.log(`📄 Envío de PDF: ${flujo.envio_pdf?.activo ? 'ACTIVADO' : 'DESACTIVADO'}`);
 });

@@ -1,52 +1,94 @@
 {
   "etapas": {
-    "presentacion": {
-      "descripcion": "Saludo y detección de modelo",
-      "siguiente": "calificacion"
+    "saludo": {
+      "frase": [
+        "Hola, ¿en qué te puedo ayudar?",
+        "Buen día, ¿cómo te puedo asistir?",
+        "Hola, ¿qué necesitás saber?"
+      ],
+      "siguiente": "modelo"
     },
-    "calificacion": {
-      "descripcion": "Preguntar si quiere rápido o financiación",
+    "modelo": {
+      "frase": [
+        "Tenemos disponible el 208 ALLURE MT, 208 ALLURE AT y 208 GT. ¿Cuál te interesa?",
+        "Podemos ofrecerte el 208 en tres versiones: MT, AT y GT. ¿Por cuál te inclinás?",
+        "Contamos con el 208 en versión manual, automática y GT. ¿Cuál te gustaría conocer?"
+      ],
+      "siguiente": "metodo"
+    },
+    "metodo": {
+      "frase": [
+        "¿Buscás adquisición directa o financiamiento de fábrica?",
+        "¿Te interesa comprar al contado o con financiación?",
+        "¿Querés hacer una compra directa o preferís un plan de financiamiento?"
+      ],
       "siguiente": null
     },
-    "rapido_precio": {
-      "descripcion": "Dar el precio y preguntar si le sirve",
-      "siguiente": null
+    "financiacion": {
+      "frase": [
+        "El 208 tiene financiación de fábrica 70/30. Con la pauta actual, si ingresás este mes, lo podés retirar con el 10% en la cuota 2, 4, 6 u 8. ¿Te gustaría saber los requisitos para ingresar?",
+        "El plan de fábrica es 70/30. Si ingresás en este mes, retirás el auto con el 10% en la cuota 2, 4, 6 u 8. ¿Te paso los requisitos?",
+        "La financiación es 70/30. Este mes, la pauta comercial permite retirar con el 10% en la cuota 2, 4, 6 u 8. ¿Querés saber cómo ingresar?"
+      ],
+      "siguiente": "requisitos"
     },
-    "rapido_cierre": {
-      "descripcion": "Derivar a Edgardo para venta directa",
-      "siguiente": null
+    "requisitos": {
+      "frase": [
+        "Para ingresar solo necesitás el DNI y la cuota 1, que en este caso es de $200.000. El ingreso lo podés realizar desde cualquier parte del país vía online. ¿Necesitás alguna info más detallada?",
+        "Solo necesitás DNI y la cuota 1 de $200.000. Podés hacer el ingreso online desde cualquier lugar. ¿Querés más detalles?",
+        "Los requisitos son mínimos: DNI y la cuota 1 de $200.000. El trámite es online y desde cualquier parte del país. ¿Te sirve esa info?"
+      ],
+      "siguiente": "cierre"
     },
-    "financiacion_explicacion": {
-      "descripcion": "Explicar el plan 70/30",
-      "siguiente": "financiacion_detalle"
+    "cierre": {
+      "frase": [
+        "¿Te gustaría que te contacte mi compañero Edgardo para ver la posibilidad de que ingreses?",
+        "¿Querés que Edgardo, mi compañero, te llame para ayudarte con el ingreso?",
+        "¿Te parece si Edgardo te contacta para avanzar con el proceso?"
+      ],
+      "siguiente": "contacto"
     },
-    "financiacion_detalle": {
-      "descripcion": "Explicar cuotas, entrega y requisitos",
-      "siguiente": "financiacion_cierre"
+    "contacto": {
+      "frase": [
+        "¿Podés indicarme el día y la hora en que te queda bien que te contacten?",
+        "¿Qué día y horario te es más cómodo para recibir una llamada?",
+        "Decime un día y una hora para que Edgardo te contacte."
+      ],
+      "siguiente": "derivacion"
     },
-    "financiacion_cierre": {
-      "descripcion": "Derivar a Edgardo para papeles",
+    "derivacion": {
+      "frase": [
+        "Muchas gracias. En ese horario mi compañero te estará llamando.",
+        "Perfecto. Edgardo te va a llamar en ese horario. Muchas gracias.",
+        "Excelente. Quedamos en que te contactan el día y hora que me indicaste."
+      ],
       "siguiente": null
     }
   },
   "palabras_clave": {
-    "rapido": ["rápido", "contado", "efectivo", "al contado"],
-    "financiacion": ["financiación", "ahorro", "cuota", "plan"],
-    "confirmacion_compra": ["sí", "me gusta", "lo quiero", "me interesa", "cómo hago", "quiero avanzar"],
-    "rechazo_precio": ["caro", "no llego", "muy caro", "no me alcanza"]
+    "saludo": ["hola", "buen día", "buenas", "cómo estás", "como estas", "qué tal"],
+    "directa": ["directa", "contado", "efectivo", "seña", "pago"],
+    "financiacion": ["financiación", "financiamiento", "cuota", "plan", "crédito"],
+    "modelos": ["208", "208 allure", "208 gt", "208 mt", "208 at"],
+    "precio": ["precio", "costo", "valor", "cuánto", "cuanto"],
+    "confirmacion": ["si", "sí", "dale", "ok", "bueno", "perfecto", "excelente"],
+    "rechazo": ["no", "ahora no", "después", "más tarde", "luego"]
   },
   "objeciones": {
     "pedir_detalle": {
-      "detectar": ["detalle", "pdf", "ficha", "especificaciones"],
+      "detectar": ["detalle", "pdf", "ficha", "especificaciones", "info extra", "más info"],
       "respuesta": "Dale, te paso el link con el detalle completo: [ENVIO_PDF]"
+    },
+    "hablar_con_alguien": {
+      "detectar": ["hablar con alguien", "llamar", "contacto", "teléfono", "conversar"],
+      "respuesta": "Por supuesto. Te paso con Edgardo, él te va a ayudar. Te contacta al toque."
     }
   },
   "envio_pdf": {
     "activo": true,
     "url_base": "https://tu-app.onrender.com/pdfs/",
     "modelos": {
-      "208": "208_allure_am25.pdf",
-      "2008": "2008_allure.pdf"
+      "208": "208_allure_am25.pdf"
     }
   }
 }
