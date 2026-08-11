@@ -3,8 +3,8 @@
     "saludo": {
       "frase": [
         "Hola, ¿en qué te puedo ayudar?",
-        "Hola, que tal ¿contame en que te puedo ayudar?",
-        "Hola, ¿como te puedo ayudar?"
+        "Hola, ¿cómo te puedo asistir?",
+        "Hola, ¿qué necesitás saber?"
       ],
       "siguiente": "modelo"
     },
@@ -22,7 +22,7 @@
         "¿Te interesa comprar al contado o con financiación?",
         "¿Querés hacer una compra directa o preferís un plan de financiamiento?"
       ],
-      "siguiente": "financiacion"
+      "siguiente": null
     },
     "financiacion": {
       "frase": [
@@ -66,12 +66,22 @@
     }
   },
   "palabras_clave": {
-    "saludo": ["hola", "buen día", "buenas", "cómo estás", "como estas", "qué tal"],
-    "directa": ["directa", "contado", "efectivo", "seña", "pago"],
-    "financiacion": ["financiación", "financiamiento", "cuota", "plan", "crédito"],
-    "modelos": ["208", "208 allure", "208 gt", "208 mt", "208 at"],
+    "saludo": ["hola", "buenas", "cómo estás", "como estas", "qué tal"],
+    "directa": ["directa", "contado", "efectivo", "seña", "pago", "compra"],
+    "financiacion": [
+      "financiación", 
+      "financiamiento", 
+      "financiacion", 
+      "financiamient",
+      "cuota", 
+      "plan", 
+      "crédito",
+      "credito",
+      "financiar"
+    ],
+    "modelos": ["208", "2008", "partner", "expert", "208 allure", "208 gt", "208 mt", "208 at"],
     "precio": ["precio", "costo", "valor", "cuánto", "cuanto"],
-    "confirmacion": ["si", "sí", "dale", "ok", "bueno", "perfecto", "excelente"],
+    "confirmacion": ["si", "sí", "dale", "ok", "bueno", "perfecto", "excelente", "quiero", "avanzar"],
     "rechazo": ["no", "ahora no", "después", "más tarde", "luego"]
   },
   "objeciones": {
@@ -88,7 +98,8 @@
     "activo": true,
     "url_base": "https://tu-app.onrender.com/pdfs/",
     "modelos": {
-      "208": "208_allure_am25.pdf"
+      "208": "208_allure_am25.pdf",
+      "2008": "2008_allure.pdf"
     }
   }
 }
