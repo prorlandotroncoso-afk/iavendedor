@@ -22,7 +22,7 @@
         "¿Te interesa comprar al contado o con financiación?",
         "¿Querés hacer una compra directa o preferís un plan de financiamiento?"
       ],
-      "siguiente": null
+      "siguiente": "financiacion"
     },
     "financiacion": {
       "frase": [
