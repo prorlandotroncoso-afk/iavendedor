@@ -44,14 +44,6 @@ const groq = new Groq({
 // ============================================================
 // 3. MEMORIA TEMPORAL
 // ============================================================
-//
-// POR AHORA:
-// La conversación queda en memoria RAM.
-//
-// MÁS ADELANTE:
-// WhatsApp nos dará el número como userId.
-// Podemos guardar estado en una fuente persistente si hace falta.
-// ============================================================
 
 const clientes = {};
 
@@ -87,8 +79,8 @@ function guardarHistorial(cliente, rol, mensaje) {
         mensaje
     });
 
-    // Evitamos crecimiento infinito
     if (cliente.historial.length > 20) {
+
         cliente.historial =
             cliente.historial.slice(-20);
     }
@@ -214,6 +206,7 @@ async function clasificarLocal(mensaje) {
 
 
     if (esSaludo(mensaje)) {
+
         intenciones.push('saludo');
     }
 
@@ -227,6 +220,7 @@ async function clasificarLocal(mensaje) {
             'credito'
         ])
     ) {
+
         intenciones.push('financiacion');
     }
 
@@ -236,9 +230,11 @@ async function clasificarLocal(mensaje) {
             'contado',
             'compra directa',
             'adquisicion directa',
-            'efectivo'
+            'efectivo',
+            'directa'
         ])
     ) {
+
         intenciones.push('directa');
     }
 
@@ -248,9 +244,12 @@ async function clasificarLocal(mensaje) {
             'cuota',
             'cuotas',
             'mensualidad',
-            'por mes'
+            'por mes',
+            'detalle',
+            'resto'
         ])
     ) {
+
         intenciones.push('cuotas');
     }
 
@@ -264,6 +263,7 @@ async function clasificarLocal(mensaje) {
             'documentos'
         ])
     ) {
+
         intenciones.push('requisitos');
     }
 
@@ -276,6 +276,7 @@ async function clasificarLocal(mensaje) {
             'cuanto cuesta'
         ])
     ) {
+
         intenciones.push('precio');
     }
 
@@ -289,6 +290,7 @@ async function clasificarLocal(mensaje) {
             'adjudicar'
         ])
     ) {
+
         intenciones.push('entrega');
     }
 
@@ -303,6 +305,7 @@ async function clasificarLocal(mensaje) {
             'carplay'
         ])
     ) {
+
         intenciones.push('equipamiento');
     }
 
@@ -314,6 +317,7 @@ async function clasificarLocal(mensaje) {
             'folleto'
         ])
     ) {
+
         intenciones.push('material');
     }
 
@@ -332,6 +336,7 @@ async function clasificarLocal(mensaje) {
             'edgardo'
         ])
     ) {
+
         intenciones.push('avanzar');
     }
 
@@ -344,6 +349,7 @@ async function clasificarLocal(mensaje) {
             'mas adelante'
         ])
     ) {
+
         intenciones.push('rechazo');
     }
 
@@ -361,10 +367,6 @@ async function clasificarLocal(mensaje) {
 
 // ============================================================
 // 7. INTERPRETAR MENSAJE CON GROQ
-// ============================================================
-//
-// GROQ NO RESPONDE AL CLIENTE ACÁ.
-// Solamente clasifica lo que quiso decir.
 // ============================================================
 
 async function interpretarMensaje(mensaje, cliente) {
@@ -439,6 +441,11 @@ debe detectar:
 modelo = "2008"
 intenciones = ["avanzar"]
 
+"¿Y el resto?"
+
+si el contexto reciente habla de cuotas,
+debe interpretar intención "cuotas".
+
 CONTEXTO ACTUAL:
 
 Etapa: ${cliente.etapa}
@@ -496,6 +503,7 @@ FORMATO EXACTO:
             inicio === -1 ||
             fin === -1
         ) {
+
             return respaldo;
         }
 
@@ -517,6 +525,7 @@ FORMATO EXACTO:
                 .map(normalizar)
                 .includes(modeloIA)
         ) {
+
             modeloIA = null;
         }
 
@@ -546,8 +555,6 @@ FORMATO EXACTO:
                 : [];
 
 
-        // Combinamos IA + reglas locales.
-        // Esto hace el clasificador más robusto.
         const intenciones = [
             ...new Set([
                 ...respaldo.intenciones,
@@ -591,9 +598,11 @@ function responderFinanciacion(vehiculo) {
 
     const partes = [];
 
+
     if (vehiculo.plan) {
+
         partes.push(
-            `tiene financiación ${vehiculo.plan}`
+            `La financiación es ${vehiculo.plan}`
         );
     }
 
@@ -604,7 +613,7 @@ function responderFinanciacion(vehiculo) {
     ) {
 
         partes.push(
-            `con retiro integrando el ${vehiculo.porcentaje_entrega} en las cuotas ${vehiculo.cuotas_entrega}`
+            `podés retirar integrando el ${vehiculo.porcentaje_entrega} en las cuotas ${vehiculo.cuotas_entrega}`
         );
     }
 
@@ -612,7 +621,7 @@ function responderFinanciacion(vehiculo) {
     if (vehiculo.monto_10_porciento) {
 
         partes.push(
-            `el monto cargado para ese porcentaje es ${vehiculo.monto_10_porciento}`
+            `ese porcentaje hoy representa ${vehiculo.monto_10_porciento}`
         );
     }
 
@@ -620,15 +629,15 @@ function responderFinanciacion(vehiculo) {
     if (partes.length === 0) {
 
         return (
-            'Tengo registrado que hay una opción de financiación, ' +
-            'pero no tengo cargadas las condiciones completas. ' +
-            `Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}.`
+            'Tengo información de financiación para este modelo, ' +
+            'pero el detalle completo no está disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
 
     return (
-        `${nombreVehiculo(vehiculo)} ${partes.join('. ')}. ` +
+        `${partes.join('. ')}. ` +
         '¿Querés que te cuente los requisitos o el detalle de las cuotas?'
     );
 }
@@ -682,7 +691,9 @@ function responderCuotas(vehiculo) {
                 tramo.valor
             ) {
 
-                if (tramo.desde === tramo.hasta) {
+                if (
+                    tramo.desde === tramo.hasta
+                ) {
 
                     respuestas.push(
                         `Cuota ${tramo.desde}: ${tramo.valor}`
@@ -702,8 +713,24 @@ function responderCuotas(vehiculo) {
     if (respuestas.length === 0) {
 
         return (
-            'No tengo cargado el detalle de las cuotas de este modelo. ' +
-            `Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo el detalle de las cuotas disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
+        );
+    }
+
+
+    if (
+        respuestas.length === 1 &&
+        (
+            vehiculo.cuota_1 ||
+            vehiculo.suscripcion
+        )
+    ) {
+
+        return (
+            `${respuestas[0]}. ` +
+            'El resto del detalle no está disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
@@ -743,7 +770,7 @@ function responderRequisitos(vehiculo) {
     if (cuotaIngreso) {
 
         partes.push(
-            `la cuota de ingreso cargada es de ${cuotaIngreso}`
+            `la cuota de ingreso es de ${cuotaIngreso}`
         );
     }
 
@@ -751,8 +778,8 @@ function responderRequisitos(vehiculo) {
     if (partes.length === 0) {
 
         return (
-            'No tengo cargados todos los requisitos de ingreso. ' +
-            `Si querés, te los confirma ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo todos los requisitos disponibles en este momento. ' +
+            `Si querés, te los puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
@@ -769,15 +796,15 @@ function responderPrecio(vehiculo) {
     if (!vehiculo.precioLista) {
 
         return (
-            'No tengo cargado el precio de lista actualizado para este modelo. ' +
-            `Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo el precio actualizado disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
 
     return (
-        `El precio de lista cargado para ${nombreVehiculo(vehiculo)} ` +
-        `es ${vehiculo.precioLista}.`
+        `El precio de lista del ${nombreVehiculo(vehiculo)} ` +
+        `es de ${vehiculo.precioLista}.`
     );
 }
 
@@ -798,7 +825,7 @@ function responderEntrega(vehiculo) {
     if (vehiculo.adjudicacion) {
 
         partes.push(
-            `Adjudicación: ${vehiculo.adjudicacion}`
+            `La adjudicación es ${vehiculo.adjudicacion}`
         );
     }
 
@@ -806,7 +833,7 @@ function responderEntrega(vehiculo) {
     if (vehiculo.entregaAsegurada) {
 
         partes.push(
-            `Entrega asegurada: ${vehiculo.entregaAsegurada}`
+            `La entrega asegurada es ${vehiculo.entregaAsegurada}`
         );
     }
 
@@ -817,7 +844,7 @@ function responderEntrega(vehiculo) {
     ) {
 
         partes.push(
-            `Está cargado un retiro con ${vehiculo.porcentaje_entrega} ` +
+            `Podés retirar integrando el ${vehiculo.porcentaje_entrega} ` +
             `en las cuotas ${vehiculo.cuotas_entrega}`
         );
     }
@@ -826,8 +853,8 @@ function responderEntrega(vehiculo) {
     if (partes.length === 0) {
 
         return (
-            'No tengo cargado el detalle de entrega para este modelo. ' +
-            `Si querés, te lo confirma ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo el detalle de entrega disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
@@ -844,14 +871,14 @@ function responderEquipamiento(vehiculo) {
     ) {
 
         return (
-            'No tengo cargado el equipamiento detallado de este modelo. ' +
-            `Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo el detalle del equipamiento disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 
 
     return (
-        `${nombreVehiculo(vehiculo)} tiene cargado: ` +
+        `${nombreVehiculo(vehiculo)} incluye: ` +
         vehiculo.equipamiento.join(', ') +
         '.'
     );
@@ -890,7 +917,7 @@ function responderMaterial(vehiculo) {
     if (links.length === 0) {
 
         return (
-            'No tengo material comercial cargado para este modelo en este momento.'
+            'No tengo material comercial disponible para este modelo en este momento.'
         );
     }
 
@@ -901,13 +928,6 @@ function responderMaterial(vehiculo) {
 
 // ============================================================
 // 9. RESPUESTA IA SEGURA PARA PREGUNTAS NO PREVISTAS
-// ============================================================
-//
-// Acá Groq puede REDACTAR.
-//
-// Pero recibe únicamente los datos reales cargados.
-//
-// Si el dato no está presente, debe decir que no lo tiene.
 // ============================================================
 
 async function respuestaSeguraIA(
@@ -945,22 +965,29 @@ REGLAS ABSOLUTAS:
 
 1. Respondé solamente con información que aparezca explícitamente en DATOS COMERCIALES PERMITIDOS.
 
-2. NO hagas cálculos salvo que el resultado esté expresamente cargado.
+2. NO hagas cálculos salvo que el resultado esté expresamente disponible.
 
 3. NO deduzcas datos.
 
 4. NO inventes.
 
-5. Si la información preguntada no aparece, decí:
-"No tengo ese dato cargado. Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}."
+5. Nunca uses expresiones como:
+"tengo cargado",
+"está cargado",
+"en la base",
+"en el sistema",
+"según la base de datos".
 
-6. Usá voseo argentino.
+6. Si la información preguntada no aparece, decí de manera natural:
+"No tengo esa información disponible en este momento. Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}."
 
-7. Máximo 3 oraciones.
+7. Usá voseo argentino.
 
-8. No intentes cerrar una venta.
+8. Máximo 3 oraciones.
 
-9. No derives automáticamente salvo que el cliente pida hablar con alguien.
+9. No intentes cerrar una venta.
+
+10. No derives automáticamente salvo que el cliente pida hablar con alguien.
 
 Respondé directamente al cliente.
 `;
@@ -1008,8 +1035,8 @@ Respondé directamente al cliente.
 
 
         return (
-            'No tengo ese dato cargado. ' +
-            `Si querés, te lo consulta ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo esa información disponible en este momento. ' +
+            `Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
     }
 }
@@ -1148,7 +1175,7 @@ async function procesarMensaje(
     if (!vehiculo) {
 
         const respuesta =
-            'Tengo identificado el modelo, pero no tengo una campaña activa cargada para ese vehículo.';
+            'En este momento no tengo información disponible para ese modelo.';
 
 
         guardarHistorial(
@@ -1213,15 +1240,6 @@ async function procesarMensaje(
     // ========================================================
     // PRIORIDAD 1: PREGUNTAS DEL CLIENTE
     // ========================================================
-    //
-    // IMPORTANTE:
-    // Las preguntas tienen prioridad sobre una confirmación.
-    //
-    // "sí, pero cuánto son las cuotas"
-    //
-    // responde CUOTAS.
-    // ========================================================
-
 
     if (
         analisis.intenciones.includes('cuotas')
@@ -1397,7 +1415,8 @@ async function procesarMensaje(
         if (vehiculo.precioLista) {
 
             respuesta +=
-                ` tengo cargado un precio de lista de ${vehiculo.precioLista}.`;
+                ` el precio de lista es de ${vehiculo.precioLista}.`;
+
         } else {
 
             respuesta += '.';
@@ -1479,10 +1498,6 @@ async function procesarMensaje(
 
     if (analisis.confirmacion) {
 
-        // ----------------------------------------------------
-        // Después de explicar financiación
-        // ----------------------------------------------------
-
         if (
             cliente.etapa === 'financiacion'
         ) {
@@ -1505,10 +1520,6 @@ async function procesarMensaje(
             return respuesta;
         }
 
-
-        // ----------------------------------------------------
-        // Cliente acepta hablar con asesor
-        // ----------------------------------------------------
 
         if (
             cliente.etapa === 'esperando_derivacion'
@@ -1549,11 +1560,6 @@ async function procesarMensaje(
             'derivado';
 
 
-        // FUTURO:
-        // Acá llamaremos a guardarLead()
-        // para enviarlo a Google Sheets.
-
-
         const respuesta =
             `Perfecto. Queda registrado. ${seller.asesorDerivacion || 'Edgardo'} va a continuar con vos. Muchas gracias.`;
 
@@ -1571,10 +1577,6 @@ async function procesarMensaje(
 
     // ========================================================
     // PREGUNTA NO PREVISTA
-    // ========================================================
-    //
-    // Groq puede redactar, PERO solamente usando los datos
-    // del vehículo.
     // ========================================================
 
     const respuesta =
@@ -1643,9 +1645,6 @@ app.post(
 
 // ============================================================
 // 12. ENDPOINT DE ESTADO
-// ============================================================
-//
-// Útil para comprobar que Render está funcionando.
 // ============================================================
 
 app.get(
