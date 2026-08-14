@@ -1,6 +1,7 @@
 // ============================================================
 // index.js
-// MARTIN IA SELLER - VERSIÓN HÍBRIDA CONTROLADA
+// MARTIN IA SELLER
+// VERSIÓN HÍBRIDA + RESPUESTAS CONTEXTUALES
 // ============================================================
 
 import express from 'express';
@@ -31,7 +32,7 @@ app.use(express.static('public'));
 
 
 // ============================================================
-// 2. CONFIGURACIÓN DEL SELLER
+// 2. CONFIGURACIÓN SELLER
 // ============================================================
 
 const seller = await loadSeller();
@@ -43,6 +44,17 @@ const groq = new Groq({
 
 // ============================================================
 // 3. MEMORIA TEMPORAL
+// ============================================================
+//
+// IMPORTANTE:
+//
+// Por ahora esta memoria vive en RAM.
+//
+// Más adelante:
+// - estado persistente → Google Sheets
+// - leads → Google Sheets
+// - seguimientos → Google Sheets / scheduler
+//
 // ============================================================
 
 const clientes = {};
@@ -62,9 +74,25 @@ function getCliente(userId) {
 
             historial: [],
 
-            ultimaPregunta: null,
+            // Qué respuesta espera Martin
+            esperandoRespuesta: null,
 
-            derivacionSolicitada: false
+            // Opciones cuando Martin hace una pregunta doble
+            opcionesEsperadas: [],
+
+            derivacionSolicitada: false,
+
+            // ------------------------------------------------
+            // PREPARADO PARA SEGUIMIENTOS FUTUROS
+            // ------------------------------------------------
+
+            ultimaInteraccion: Date.now(),
+
+            ultimoMensajeMartin: null,
+
+            seguimiento20mEnviado: false,
+
+            seguimiento24hEnviado: false
         };
     }
 
@@ -72,17 +100,34 @@ function getCliente(userId) {
 }
 
 
-function guardarHistorial(cliente, rol, mensaje) {
+function guardarHistorial(
+    cliente,
+    rol,
+    mensaje
+) {
 
     cliente.historial.push({
         rol,
-        mensaje
+        mensaje,
+        fecha: Date.now()
     });
 
-    if (cliente.historial.length > 20) {
+
+    if (cliente.historial.length > 30) {
 
         cliente.historial =
-            cliente.historial.slice(-20);
+            cliente.historial.slice(-30);
+    }
+
+
+    cliente.ultimaInteraccion =
+        Date.now();
+
+
+    if (rol === 'martin') {
+
+        cliente.ultimoMensajeMartin =
+            mensaje;
     }
 }
 
@@ -101,41 +146,83 @@ function normalizar(texto = '') {
 }
 
 
-function contieneAlguna(texto, palabras) {
+function contieneAlguna(
+    texto,
+    palabras
+) {
 
-    const t = normalizar(texto);
+    const t =
+        normalizar(texto);
+
 
     return palabras.some(
-        palabra => t.includes(normalizar(palabra))
+        palabra =>
+            t.includes(
+                normalizar(palabra)
+            )
     );
 }
 
 
 function esConfirmacionSimple(texto) {
 
-    const t = normalizar(texto);
+    const t =
+        normalizar(texto);
+
 
     const confirmaciones = [
+
         'si',
         'dale',
         'ok',
+        'okay',
         'bueno',
         'perfecto',
         'claro',
         'de una',
         'esta bien',
-        'me sirve'
+        'me sirve',
+        'si dale',
+        'dale si',
+        'si claro',
+        'si por favor'
     ];
+
 
     return confirmaciones.includes(t);
 }
 
 
+function esNegacionSimple(texto) {
+
+    const t =
+        normalizar(texto);
+
+
+    const negaciones = [
+
+        'no',
+        'no gracias',
+        'ahora no',
+        'por ahora no',
+        'despues',
+        'mas adelante',
+        'dejalo'
+    ];
+
+
+    return negaciones.includes(t);
+}
+
+
 function esSaludo(texto) {
 
-    const t = normalizar(texto);
+    const t =
+        normalizar(texto);
+
 
     const saludos = [
+
         'hola',
         'buenas',
         'buen dia',
@@ -145,11 +232,15 @@ function esSaludo(texto) {
         'como estas'
     ];
 
+
     return saludos.includes(t);
 }
 
 
-function nombreVehiculo(vehiculo, fallback) {
+function nombreVehiculo(
+    vehiculo,
+    fallback
+) {
 
     return (
         vehiculo?.modelo ||
@@ -163,194 +254,272 @@ function nombreVehiculo(vehiculo, fallback) {
 // 5. DETECCIÓN DIRECTA DE MODELO
 // ============================================================
 
-async function detectarModeloDirecto(mensaje) {
+async function detectarModeloDirecto(
+    mensaje
+) {
 
     const modelos =
         await listarModelosDisponibles();
 
-    const texto = normalizar(mensaje);
+
+    const texto =
+        normalizar(mensaje);
+
 
     for (const vehiculo of modelos) {
 
         const key =
-            normalizar(vehiculo.key);
+            normalizar(
+                vehiculo.key
+            );
+
 
         const modeloCompleto =
-            normalizar(vehiculo.modelo || '');
+            normalizar(
+                vehiculo.modelo || ''
+            );
+
 
         if (
             texto.includes(key) ||
             (
                 modeloCompleto &&
-                texto.includes(modeloCompleto)
+                texto.includes(
+                    modeloCompleto
+                )
             )
         ) {
+
             return vehiculo.key;
         }
     }
+
 
     return null;
 }
 
 
 // ============================================================
-// 6. CLASIFICADOR LOCAL DE RESPALDO
+// 6. CLASIFICADOR LOCAL
 // ============================================================
 
-async function clasificarLocal(mensaje) {
+async function clasificarLocal(
+    mensaje
+) {
 
     const intenciones = [];
 
+
     const modelo =
-        await detectarModeloDirecto(mensaje);
-
-
-    if (esSaludo(mensaje)) {
-
-        intenciones.push('saludo');
-    }
+        await detectarModeloDirecto(
+            mensaje
+        );
 
 
     if (
-        contieneAlguna(mensaje, [
-            'financiacion',
-            'financiamiento',
-            'financiar',
-            'plan',
-            'credito'
-        ])
+        esSaludo(mensaje)
     ) {
 
-        intenciones.push('financiacion');
+        intenciones.push(
+            'saludo'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'contado',
-            'compra directa',
-            'adquisicion directa',
-            'efectivo',
+        contieneAlguna(
+            mensaje,
+            [
+                'financiacion',
+                'financiamiento',
+                'financiar',
+                'plan',
+                'credito'
+            ]
+        )
+    ) {
+
+        intenciones.push(
+            'financiacion'
+        );
+    }
+
+
+    if (
+        contieneAlguna(
+            mensaje,
+            [
+                'contado',
+                'compra directa',
+                'adquisicion directa',
+                'efectivo',
+                'directa'
+            ]
+        )
+    ) {
+
+        intenciones.push(
             'directa'
-        ])
-    ) {
-
-        intenciones.push('directa');
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'cuota',
-            'cuotas',
-            'mensualidad',
-            'por mes',
-            'detalle',
-            'resto'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'cuota',
+                'cuotas',
+                'mensualidad',
+                'por mes',
+                'detalle de cuotas',
+                'detalle cuotas'
+            ]
+        )
     ) {
 
-        intenciones.push('cuotas');
+        intenciones.push(
+            'cuotas'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'requisito',
-            'requisitos',
-            'dni',
-            'documentacion',
-            'documentos'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'requisito',
+                'requisitos',
+                'dni',
+                'documentacion',
+                'documentos'
+            ]
+        )
     ) {
 
-        intenciones.push('requisitos');
+        intenciones.push(
+            'requisitos'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'precio',
-            'valor',
-            'cuanto sale',
-            'cuanto cuesta'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'precio',
+                'valor',
+                'cuanto sale',
+                'cuanto cuesta',
+                'cuanto vale'
+            ]
+        )
     ) {
 
-        intenciones.push('precio');
+        intenciones.push(
+            'precio'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'entrega',
-            'retirar',
-            'retiro',
-            'adjudicacion',
-            'adjudicar'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'entrega',
+                'retirar',
+                'retiro',
+                'adjudicacion',
+                'adjudicar'
+            ]
+        )
     ) {
 
-        intenciones.push('entrega');
+        intenciones.push(
+            'entrega'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'equipamiento',
-            'equipado',
-            'trae',
-            'tiene camara',
-            'android auto',
-            'carplay'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'equipamiento',
+                'equipado',
+                'que trae',
+                'trae',
+                'camara',
+                'android auto',
+                'carplay'
+            ]
+        )
     ) {
 
-        intenciones.push('equipamiento');
+        intenciones.push(
+            'equipamiento'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'pdf',
-            'ficha tecnica',
-            'folleto'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'pdf',
+                'ficha tecnica',
+                'folleto'
+            ]
+        )
     ) {
 
-        intenciones.push('material');
+        intenciones.push(
+            'material'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'quiero avanzar',
-            'quiero ingresar',
-            'quiero hacerlo',
-            'me interesa avanzar',
-            'contactame',
-            'contactarme',
-            'que me llamen',
-            'hablar con alguien',
-            'hablar con un asesor',
-            'edgardo'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'quiero avanzar',
+                'quiero ingresar',
+                'quiero hacerlo',
+                'me interesa avanzar',
+                'me interesa ingresar',
+                'contactame',
+                'contactarme',
+                'que me llamen',
+                'hablar con alguien',
+                'hablar con un asesor',
+                'pasame con edgardo',
+                'edgardo'
+            ]
+        )
     ) {
 
-        intenciones.push('avanzar');
+        intenciones.push(
+            'avanzar'
+        );
     }
 
 
     if (
-        contieneAlguna(mensaje, [
-            'no gracias',
-            'no me interesa',
-            'ahora no',
-            'mas adelante'
-        ])
+        contieneAlguna(
+            mensaje,
+            [
+                'no gracias',
+                'no me interesa',
+                'ahora no',
+                'mas adelante'
+            ]
+        )
     ) {
 
-        intenciones.push('rechazo');
+        intenciones.push(
+            'rechazo'
+        );
     }
 
 
@@ -360,33 +529,55 @@ async function clasificarLocal(mensaje) {
 
         intenciones,
 
-        confirmacion: esConfirmacionSimple(mensaje)
+        confirmacion:
+            esConfirmacionSimple(mensaje),
+
+        negacion:
+            esNegacionSimple(mensaje)
     };
 }
 
 
 // ============================================================
-// 7. INTERPRETAR MENSAJE CON GROQ
+// 7. INTERPRETACIÓN CON GROQ
+// ============================================================
+//
+// GROQ NO RESPONDE ACÁ.
+//
+// Solo interpreta qué quiso decir
+// el cliente.
+//
 // ============================================================
 
-async function interpretarMensaje(mensaje, cliente) {
+async function interpretarMensaje(
+    mensaje,
+    cliente
+) {
 
     const respaldo =
-        await clasificarLocal(mensaje);
+        await clasificarLocal(
+            mensaje
+        );
+
 
     try {
 
         const modelos =
             await listarModelosDisponibles();
 
+
         const clavesModelos =
-            modelos.map(v => v.key);
+            modelos.map(
+                v => v.key
+            );
+
 
         const historialReciente =
             cliente.historial
-                .slice(-6)
+                .slice(-8)
                 .map(
-                    h => `${h.rol}: ${h.mensaje}`
+                    h =>
+                        `${h.rol}: ${h.mensaje}`
                 )
                 .join('\n');
 
@@ -394,13 +585,13 @@ async function interpretarMensaje(mensaje, cliente) {
         const prompt = `
 ${seller.prompt}
 
-Ahora actuás SOLAMENTE como clasificador de intención.
+Tu única tarea ahora es CLASIFICAR el mensaje del cliente.
 
 NO respondas al cliente.
 NO des información comercial.
 NO inventes nada.
 
-Analizá el mensaje y devolvé ÚNICAMENTE JSON válido.
+Devolvé ÚNICAMENTE JSON válido.
 
 MODELOS VÁLIDOS:
 ${JSON.stringify(clavesModelos)}
@@ -425,47 +616,74 @@ IMPORTANTE:
 
 Una frase puede tener MÁS DE UNA intención.
 
-Ejemplo:
+Ejemplos:
 
 "Sí me sirve, pero ¿las cuotas cuánto son?"
 
-debe detectar "cuotas" y NO asumir que quiere ser derivado.
+intenciones:
+["cuotas"]
 
-"Sí, dale"
+confirmacion:
+true
 
-puede ser solamente confirmación dependiendo del contexto.
 
 "Quiero avanzar con el 2008"
 
-debe detectar:
-modelo = "2008"
-intenciones = ["avanzar"]
+modelo:
+"2008"
+
+intenciones:
+["avanzar"]
+
 
 "¿Y el resto?"
 
-si el contexto reciente habla de cuotas,
-debe interpretar intención "cuotas".
+Si el historial reciente habla de cuotas,
+debe interpretarse como intención "cuotas".
+
+
+"Ok"
+
+NO significa automáticamente avanzar.
+
+Debe interpretarse usando ESPERANDO RESPUESTA.
+
 
 CONTEXTO ACTUAL:
 
-Etapa: ${cliente.etapa}
-Modelo actual: ${cliente.modelo || 'ninguno'}
-Método actual: ${cliente.metodo || 'ninguno'}
+Etapa:
+${cliente.etapa}
+
+Modelo:
+${cliente.modelo || 'ninguno'}
+
+Método:
+${cliente.metodo || 'ninguno'}
+
+Esperando respuesta:
+${cliente.esperandoRespuesta || 'ninguna'}
+
+Opciones esperadas:
+${JSON.stringify(cliente.opcionesEsperadas || [])}
+
 
 HISTORIAL RECIENTE:
 
 ${historialReciente || 'Sin historial'}
 
-MENSAJE:
+
+MENSAJE DEL CLIENTE:
 
 "${mensaje}"
+
 
 FORMATO EXACTO:
 
 {
   "modelo": null,
   "intenciones": [],
-  "confirmacion": false
+  "confirmacion": false,
+  "negacion": false
 }
 `;
 
@@ -473,7 +691,8 @@ FORMATO EXACTO:
         const response =
             await groq.chat.completions.create({
 
-                model: 'llama-3.3-70b-versatile',
+                model:
+                    'llama-3.3-70b-versatile',
 
                 messages: [
                     {
@@ -489,11 +708,15 @@ FORMATO EXACTO:
 
 
         const contenido =
-            response.choices?.[0]?.message?.content || '';
+            response
+                .choices?.[0]
+                ?.message
+                ?.content || '';
 
 
         const inicio =
             contenido.indexOf('{');
+
 
         const fin =
             contenido.lastIndexOf('}');
@@ -510,13 +733,19 @@ FORMATO EXACTO:
 
         const json =
             JSON.parse(
-                contenido.slice(inicio, fin + 1)
+                contenido.slice(
+                    inicio,
+                    fin + 1
+                )
             );
 
 
-        let modeloIA = json.modelo
-            ? normalizar(json.modelo)
-            : null;
+        let modeloIA =
+            json.modelo
+                ? normalizar(
+                    json.modelo
+                )
+                : null;
 
 
         if (
@@ -531,6 +760,7 @@ FORMATO EXACTO:
 
 
         const intencionesValidas = [
+
             'saludo',
             'modelo',
             'financiacion',
@@ -548,14 +778,18 @@ FORMATO EXACTO:
 
 
         const intencionesIA =
-            Array.isArray(json.intenciones)
+            Array.isArray(
+                json.intenciones
+            )
                 ? json.intenciones.filter(
-                    i => intencionesValidas.includes(i)
+                    i =>
+                        intencionesValidas.includes(i)
                 )
                 : [];
 
 
         const intenciones = [
+
             ...new Set([
                 ...respaldo.intenciones,
                 ...intencionesIA
@@ -574,7 +808,11 @@ FORMATO EXACTO:
 
             confirmacion:
                 respaldo.confirmacion ||
-                json.confirmacion === true
+                json.confirmacion === true,
+
+            negacion:
+                respaldo.negacion ||
+                json.negacion === true
         };
 
 
@@ -585,16 +823,19 @@ FORMATO EXACTO:
             error.message
         );
 
+
         return respaldo;
     }
 }
 
 
 // ============================================================
-// 8. RESPUESTAS COMERCIALES CONTROLADAS
+// 8. RESPUESTAS CONTROLADAS
 // ============================================================
 
-function responderFinanciacion(vehiculo) {
+function responderFinanciacion(
+    vehiculo
+) {
 
     const partes = [];
 
@@ -618,7 +859,9 @@ function responderFinanciacion(vehiculo) {
     }
 
 
-    if (vehiculo.monto_10_porciento) {
+    if (
+        vehiculo.monto_10_porciento
+    ) {
 
         partes.push(
             `ese porcentaje hoy representa ${vehiculo.monto_10_porciento}`
@@ -626,7 +869,9 @@ function responderFinanciacion(vehiculo) {
     }
 
 
-    if (partes.length === 0) {
+    if (
+        partes.length === 0
+    ) {
 
         return (
             'Tengo información de financiación para este modelo, ' +
@@ -638,52 +883,67 @@ function responderFinanciacion(vehiculo) {
 
     return (
         `${partes.join('. ')}. ` +
-        '¿Querés que te cuente los requisitos o el detalle de las cuotas?'
+        '¿Querés conocer los requisitos o el detalle de las cuotas?'
     );
 }
 
 
-function responderCuotas(vehiculo) {
+function responderCuotas(
+    vehiculo
+) {
 
     const respuestas = [];
 
 
-    if (vehiculo.suscripcion) {
+    if (
+        vehiculo.suscripcion
+    ) {
 
         respuestas.push(
-            `Cuota de suscripción: ${vehiculo.suscripcion}`
+            `La cuota de suscripción es de ${vehiculo.suscripcion}`
         );
 
-    } else if (vehiculo.cuota_1) {
+    } else if (
+        vehiculo.cuota_1
+    ) {
 
         respuestas.push(
-            `Cuota 1: ${vehiculo.cuota_1}`
-        );
-    }
-
-
-    if (vehiculo.cuotaPura) {
-
-        respuestas.push(
-            `Cuota pura: ${vehiculo.cuotaPura}`
-        );
-    }
-
-
-    if (vehiculo.cuotaPublicitaria) {
-
-        respuestas.push(
-            `Cuota publicitaria: ${vehiculo.cuotaPublicitaria}`
+            `La cuota 1 es de ${vehiculo.cuota_1}`
         );
     }
 
 
     if (
-        Array.isArray(vehiculo.cuotas) &&
+        vehiculo.cuotaPura
+    ) {
+
+        respuestas.push(
+            `La cuota pura es de ${vehiculo.cuotaPura}`
+        );
+    }
+
+
+    if (
+        vehiculo.cuotaPublicitaria
+    ) {
+
+        respuestas.push(
+            `La cuota publicitaria es de ${vehiculo.cuotaPublicitaria}`
+        );
+    }
+
+
+    if (
+        Array.isArray(
+            vehiculo.cuotas
+        ) &&
         vehiculo.cuotas.length > 0
     ) {
 
-        for (const tramo of vehiculo.cuotas) {
+        for (
+            const tramo
+            of vehiculo.cuotas
+        ) {
 
             if (
                 tramo.desde != null &&
@@ -692,17 +952,18 @@ function responderCuotas(vehiculo) {
             ) {
 
                 if (
-                    tramo.desde === tramo.hasta
+                    tramo.desde ===
+                    tramo.hasta
                 ) {
 
                     respuestas.push(
-                        `Cuota ${tramo.desde}: ${tramo.valor}`
+                        `La cuota ${tramo.desde} es de ${tramo.valor}`
                     );
 
                 } else {
 
                     respuestas.push(
-                        `Cuotas ${tramo.desde} a ${tramo.hasta}: ${tramo.valor}`
+                        `De la cuota ${tramo.desde} a la ${tramo.hasta}, el valor es ${tramo.valor}`
                     );
                 }
             }
@@ -710,7 +971,9 @@ function responderCuotas(vehiculo) {
     }
 
 
-    if (respuestas.length === 0) {
+    if (
+        respuestas.length === 0
+    ) {
 
         return (
             'No tengo el detalle de las cuotas disponible en este momento. ' +
@@ -720,11 +983,7 @@ function responderCuotas(vehiculo) {
 
 
     if (
-        respuestas.length === 1 &&
-        (
-            vehiculo.cuota_1 ||
-            vehiculo.suscripcion
-        )
+        respuestas.length === 1
     ) {
 
         return (
@@ -735,11 +994,16 @@ function responderCuotas(vehiculo) {
     }
 
 
-    return respuestas.join('. ') + '.';
+    return (
+        respuestas.join('. ') +
+        '.'
+    );
 }
 
 
-function responderRequisitos(vehiculo) {
+function responderRequisitos(
+    vehiculo
+) {
 
     const requisitos =
         vehiculo.requisitos ||
@@ -775,7 +1039,9 @@ function responderRequisitos(vehiculo) {
     }
 
 
-    if (partes.length === 0) {
+    if (
+        partes.length === 0
+    ) {
 
         return (
             'No tengo todos los requisitos disponibles en este momento. ' +
@@ -791,9 +1057,13 @@ function responderRequisitos(vehiculo) {
 }
 
 
-function responderPrecio(vehiculo) {
+function responderPrecio(
+    vehiculo
+) {
 
-    if (!vehiculo.precioLista) {
+    if (
+        !vehiculo.precioLista
+    ) {
 
         return (
             'No tengo el precio actualizado disponible en este momento. ' +
@@ -809,12 +1079,16 @@ function responderPrecio(vehiculo) {
 }
 
 
-function responderEntrega(vehiculo) {
+function responderEntrega(
+    vehiculo
+) {
 
     const partes = [];
 
 
-    if (vehiculo.entrega) {
+    if (
+        vehiculo.entrega
+    ) {
 
         partes.push(
             vehiculo.entrega
@@ -822,7 +1096,9 @@ function responderEntrega(vehiculo) {
     }
 
 
-    if (vehiculo.adjudicacion) {
+    if (
+        vehiculo.adjudicacion
+    ) {
 
         partes.push(
             `La adjudicación es ${vehiculo.adjudicacion}`
@@ -830,7 +1106,9 @@ function responderEntrega(vehiculo) {
     }
 
 
-    if (vehiculo.entregaAsegurada) {
+    if (
+        vehiculo.entregaAsegurada
+    ) {
 
         partes.push(
             `La entrega asegurada es ${vehiculo.entregaAsegurada}`
@@ -844,13 +1122,14 @@ function responderEntrega(vehiculo) {
     ) {
 
         partes.push(
-            `Podés retirar integrando el ${vehiculo.porcentaje_entrega} ` +
-            `en las cuotas ${vehiculo.cuotas_entrega}`
+            `Podés retirar integrando el ${vehiculo.porcentaje_entrega} en las cuotas ${vehiculo.cuotas_entrega}`
         );
     }
 
 
-    if (partes.length === 0) {
+    if (
+        partes.length === 0
+    ) {
 
         return (
             'No tengo el detalle de entrega disponible en este momento. ' +
@@ -859,14 +1138,21 @@ function responderEntrega(vehiculo) {
     }
 
 
-    return partes.join('. ') + '.';
+    return (
+        partes.join('. ') +
+        '.'
+    );
 }
 
 
-function responderEquipamiento(vehiculo) {
+function responderEquipamiento(
+    vehiculo
+) {
 
     if (
-        !Array.isArray(vehiculo.equipamiento) ||
+        !Array.isArray(
+            vehiculo.equipamiento
+        ) ||
         vehiculo.equipamiento.length === 0
     ) {
 
@@ -885,12 +1171,16 @@ function responderEquipamiento(vehiculo) {
 }
 
 
-function responderMaterial(vehiculo) {
+function responderMaterial(
+    vehiculo
+) {
 
     const links = [];
 
 
-    if (vehiculo.materialComercial) {
+    if (
+        vehiculo.materialComercial
+    ) {
 
         links.push(
             `Pauta comercial: ${vehiculo.materialComercial}`
@@ -898,7 +1188,9 @@ function responderMaterial(vehiculo) {
     }
 
 
-    if (vehiculo.pdfFichaTecnica) {
+    if (
+        vehiculo.pdfFichaTecnica
+    ) {
 
         links.push(
             `Ficha técnica: ${vehiculo.pdfFichaTecnica}`
@@ -906,7 +1198,9 @@ function responderMaterial(vehiculo) {
     }
 
 
-    if (vehiculo.videoComercial) {
+    if (
+        vehiculo.videoComercial
+    ) {
 
         links.push(
             `Video: ${vehiculo.videoComercial}`
@@ -914,7 +1208,9 @@ function responderMaterial(vehiculo) {
     }
 
 
-    if (links.length === 0) {
+    if (
+        links.length === 0
+    ) {
 
         return (
             'No tengo material comercial disponible para este modelo en este momento.'
@@ -927,7 +1223,7 @@ function responderMaterial(vehiculo) {
 
 
 // ============================================================
-// 9. RESPUESTA IA SEGURA PARA PREGUNTAS NO PREVISTAS
+// 9. RESPUESTA IA SEGURA
 // ============================================================
 
 async function respuestaSeguraIA(
@@ -949,7 +1245,7 @@ async function respuestaSeguraIA(
         const prompt = `
 ${seller.prompt}
 
-El cliente está consultando por:
+El cliente consulta por:
 
 ${nombreVehiculo(vehiculo)}
 
@@ -961,42 +1257,43 @@ PREGUNTA DEL CLIENTE:
 
 "${mensaje}"
 
-REGLAS ABSOLUTAS:
+REGLAS:
 
-1. Respondé solamente con información que aparezca explícitamente en DATOS COMERCIALES PERMITIDOS.
+1. Respondé SOLO con información disponible arriba.
 
-2. NO hagas cálculos salvo que el resultado esté expresamente disponible.
+2. NO inventes.
 
-3. NO deduzcas datos.
+3. NO hagas cálculos que no estén expresamente disponibles.
 
-4. NO inventes.
+4. NO deduzcas valores.
 
-5. Nunca uses expresiones como:
+5. Nunca digas:
 "tengo cargado",
 "está cargado",
-"en la base",
-"en el sistema",
-"según la base de datos".
+"base de datos",
+"sistema",
+"según la base".
 
-6. Si la información preguntada no aparece, decí de manera natural:
+6. Si no tenés la información:
 "No tengo esa información disponible en este momento. Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}."
 
 7. Usá voseo argentino.
 
 8. Máximo 3 oraciones.
 
-9. No intentes cerrar una venta.
+9. No vendas.
 
-10. No derives automáticamente salvo que el cliente pida hablar con alguien.
+10. No repitas información que el cliente no pidió.
 
-Respondé directamente al cliente.
+Respondé directamente.
 `;
 
 
         const response =
             await groq.chat.completions.create({
 
-                model: 'llama-3.3-70b-versatile',
+                model:
+                    'llama-3.3-70b-versatile',
 
                 messages: [
                     {
@@ -1005,14 +1302,17 @@ Respondé directamente al cliente.
                     }
                 ],
 
-                temperature: 0.15,
+                temperature: 0.1,
 
                 max_tokens: 180
             });
 
 
         const respuesta =
-            response.choices?.[0]?.message?.content;
+            response
+                .choices?.[0]
+                ?.message
+                ?.content;
 
 
         if (!respuesta) {
@@ -1029,7 +1329,7 @@ Respondé directamente al cliente.
     } catch (error) {
 
         console.error(
-            '⚠️ Falló respuesta segura Groq:',
+            '⚠️ Error Groq:',
             error.message
         );
 
@@ -1043,7 +1343,168 @@ Respondé directamente al cliente.
 
 
 // ============================================================
-// 10. PROCESAR MENSAJE
+// 10. RESPUESTAS ESPERADAS
+// ============================================================
+
+async function procesarRespuestaEsperada(
+    mensaje,
+    cliente,
+    analisis,
+    vehiculo
+) {
+
+    // --------------------------------------------------------
+    // ELECCIÓN ENTRE REQUISITOS O CUOTAS
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'elegir_info_financiacion'
+    ) {
+
+        if (
+            analisis.intenciones.includes(
+                'cuotas'
+            )
+        ) {
+
+            cliente.esperandoRespuesta =
+                'aceptar_derivacion';
+
+
+            cliente.opcionesEsperadas = [];
+
+
+            return responderCuotas(
+                vehiculo
+            );
+        }
+
+
+        if (
+            analisis.intenciones.includes(
+                'requisitos'
+            )
+        ) {
+
+            cliente.esperandoRespuesta =
+                'aceptar_derivacion';
+
+
+            cliente.opcionesEsperadas = [];
+
+
+            return responderRequisitos(
+                vehiculo
+            );
+        }
+
+
+        // "dale", "sí", "ok"
+        // no alcanza para saber cuál quiere.
+
+        if (
+            analisis.confirmacion
+        ) {
+
+            return (
+                'Dale. ¿Querés que te pase primero los requisitos o el detalle de las cuotas?'
+            );
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // ACEPTAR DERIVACIÓN
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'aceptar_derivacion'
+    ) {
+
+        if (
+            analisis.intenciones.includes(
+                'avanzar'
+            ) ||
+            analisis.confirmacion
+        ) {
+
+            cliente.esperandoRespuesta =
+                'horario_contacto';
+
+
+            cliente.derivacionSolicitada =
+                true;
+
+
+            cliente.opcionesEsperadas = [];
+
+
+            return (
+                `Perfecto. ¿Qué día y horario te queda cómodo para que te contacte ${seller.asesorDerivacion || 'Edgardo'}?`
+            );
+        }
+
+
+        if (
+            analisis.negacion
+        ) {
+
+            cliente.esperandoRespuesta =
+                null;
+
+
+            cliente.opcionesEsperadas = [];
+
+
+            return (
+                'Dale, no hay problema. Si necesitás otra información, decime.'
+            );
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // ESPERANDO HORARIO
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'horario_contacto'
+    ) {
+
+        if (
+            mensaje.length >= 2
+        ) {
+
+            cliente.esperandoRespuesta =
+                null;
+
+
+            cliente.etapa =
+                'derivado';
+
+
+            // FUTURO:
+            //
+            // guardarLead(...)
+            // en Google Sheets.
+
+
+            return (
+                `Perfecto. Queda registrado. ${seller.asesorDerivacion || 'Edgardo'} va a continuar con vos. Muchas gracias.`
+            );
+        }
+    }
+
+
+    return null;
+}
+
+
+// ============================================================
+// 11. PROCESAR MENSAJE
 // ============================================================
 
 async function procesarMensaje(
@@ -1052,12 +1513,16 @@ async function procesarMensaje(
 ) {
 
     const mensaje =
-        String(userMessage || '').trim();
+        String(
+            userMessage || ''
+        ).trim();
 
 
     if (!mensaje) {
 
-        return 'Escribime qué necesitás saber y te ayudo.';
+        return (
+            'Escribime qué necesitás saber y te ayudo.'
+        );
     }
 
 
@@ -1072,6 +1537,16 @@ async function procesarMensaje(
     );
 
 
+    // Cada vez que el cliente responde,
+    // cancelamos futuros flags de seguimiento.
+
+    cliente.seguimiento20mEnviado =
+        false;
+
+    cliente.seguimiento24hEnviado =
+        false;
+
+
     const analisis =
         await interpretarMensaje(
             mensaje,
@@ -1080,10 +1555,12 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // MODELO
+    // ACTUALIZAR MODELO
     // ========================================================
 
-    if (analisis.modelo) {
+    if (
+        analisis.modelo
+    ) {
 
         cliente.modelo =
             analisis.modelo;
@@ -1091,23 +1568,30 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // SALUDO PURO
+    // SALUDO
     // ========================================================
 
     const intencionesNoSaludo =
         analisis.intenciones.filter(
-            i => i !== 'saludo'
+            i =>
+                i !== 'saludo'
         );
 
 
     if (
-        analisis.intenciones.includes('saludo') &&
+        analisis.intenciones.includes(
+            'saludo'
+        ) &&
         intencionesNoSaludo.length === 0 &&
         !analisis.modelo
     ) {
 
         cliente.etapa =
             'esperando_modelo';
+
+
+        cliente.esperandoRespuesta =
+            'modelo';
 
 
         const respuesta =
@@ -1126,10 +1610,12 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // SI TODAVÍA NO SABEMOS EL MODELO
+    // SIN MODELO
     // ========================================================
 
-    if (!cliente.modelo) {
+    if (
+        !cliente.modelo
+    ) {
 
         const modelos =
             await listarModelosDisponibles();
@@ -1137,7 +1623,8 @@ async function procesarMensaje(
 
         const nombres =
             modelos.map(
-                v => v.key.toUpperCase()
+                v =>
+                    v.key.toUpperCase()
             );
 
 
@@ -1149,6 +1636,10 @@ async function procesarMensaje(
 
         cliente.etapa =
             'esperando_modelo';
+
+
+        cliente.esperandoRespuesta =
+            'modelo';
 
 
         guardarHistorial(
@@ -1163,7 +1654,7 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // OBTENER DATOS REALES
+    // OBTENER VEHÍCULO
     // ========================================================
 
     const vehiculo =
@@ -1172,7 +1663,9 @@ async function procesarMensaje(
         );
 
 
-    if (!vehiculo) {
+    if (
+        !vehiculo
+    ) {
 
         const respuesta =
             'En este momento no tengo información disponible para ese modelo.';
@@ -1190,10 +1683,39 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // SI ACABA DE ELEGIR MODELO Y NO HIZO OTRA PREGUNTA
+    // RESPUESTA ESPERADA
+    // ========================================================
+
+    const respuestaEsperada =
+        await procesarRespuestaEsperada(
+            mensaje,
+            cliente,
+            analisis,
+            vehiculo
+        );
+
+
+    if (
+        respuestaEsperada
+    ) {
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuestaEsperada
+        );
+
+
+        return respuestaEsperada;
+    }
+
+
+    // ========================================================
+    // MODELO NUEVO
     // ========================================================
 
     const preguntasComerciales = [
+
         'financiacion',
         'directa',
         'cuotas',
@@ -1208,7 +1730,8 @@ async function procesarMensaje(
 
     const tienePreguntaComercial =
         analisis.intenciones.some(
-            i => preguntasComerciales.includes(i)
+            i =>
+                preguntasComerciales.includes(i)
         );
 
 
@@ -1219,6 +1742,16 @@ async function procesarMensaje(
 
         cliente.etapa =
             'esperando_metodo';
+
+
+        cliente.esperandoRespuesta =
+            'metodo_compra';
+
+
+        cliente.opcionesEsperadas = [
+            'directa',
+            'financiacion'
+        ];
 
 
         const respuesta =
@@ -1238,19 +1771,27 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // PRIORIDAD 1: PREGUNTAS DEL CLIENTE
+    // PREGUNTAS COMERCIALES
     // ========================================================
 
     if (
-        analisis.intenciones.includes('cuotas')
+        analisis.intenciones.includes(
+            'cuotas'
+        )
     ) {
 
         cliente.etapa =
             'consultando_cuotas';
 
 
+        cliente.esperandoRespuesta =
+            'aceptar_derivacion';
+
+
         const respuesta =
-            responderCuotas(vehiculo);
+            responderCuotas(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1265,11 +1806,19 @@ async function procesarMensaje(
 
 
     if (
-        analisis.intenciones.includes('precio')
+        analisis.intenciones.includes(
+            'precio'
+        )
     ) {
 
+        cliente.esperandoRespuesta =
+            null;
+
+
         const respuesta =
-            responderPrecio(vehiculo);
+            responderPrecio(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1284,15 +1833,23 @@ async function procesarMensaje(
 
 
     if (
-        analisis.intenciones.includes('requisitos')
+        analisis.intenciones.includes(
+            'requisitos'
+        )
     ) {
 
         cliente.etapa =
-            'esperando_derivacion';
+            'consultando_requisitos';
+
+
+        cliente.esperandoRespuesta =
+            'aceptar_derivacion';
 
 
         const respuesta =
-            responderRequisitos(vehiculo);
+            responderRequisitos(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1307,11 +1864,19 @@ async function procesarMensaje(
 
 
     if (
-        analisis.intenciones.includes('entrega')
+        analisis.intenciones.includes(
+            'entrega'
+        )
     ) {
 
+        cliente.esperandoRespuesta =
+            null;
+
+
         const respuesta =
-            responderEntrega(vehiculo);
+            responderEntrega(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1326,11 +1891,19 @@ async function procesarMensaje(
 
 
     if (
-        analisis.intenciones.includes('equipamiento')
+        analisis.intenciones.includes(
+            'equipamiento'
+        )
     ) {
 
+        cliente.esperandoRespuesta =
+            null;
+
+
         const respuesta =
-            responderEquipamiento(vehiculo);
+            responderEquipamiento(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1345,11 +1918,19 @@ async function procesarMensaje(
 
 
     if (
-        analisis.intenciones.includes('material')
+        analisis.intenciones.includes(
+            'material'
+        )
     ) {
 
+        cliente.esperandoRespuesta =
+            null;
+
+
         const respuesta =
-            responderMaterial(vehiculo);
+            responderMaterial(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1368,18 +1949,33 @@ async function procesarMensaje(
     // ========================================================
 
     if (
-        analisis.intenciones.includes('financiacion')
+        analisis.intenciones.includes(
+            'financiacion'
+        )
     ) {
 
         cliente.metodo =
             'financiacion';
 
+
         cliente.etapa =
             'financiacion';
 
 
+        cliente.esperandoRespuesta =
+            'elegir_info_financiacion';
+
+
+        cliente.opcionesEsperadas = [
+            'requisitos',
+            'cuotas'
+        ];
+
+
         const respuesta =
-            responderFinanciacion(vehiculo);
+            responderFinanciacion(
+                vehiculo
+            );
 
 
         guardarHistorial(
@@ -1394,25 +1990,34 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // ADQUISICIÓN DIRECTA
+    // DIRECTA
     // ========================================================
 
     if (
-        analisis.intenciones.includes('directa')
+        analisis.intenciones.includes(
+            'directa'
+        )
     ) {
 
         cliente.metodo =
             'directa';
 
+
         cliente.etapa =
-            'esperando_derivacion';
+            'directa';
+
+
+        cliente.esperandoRespuesta =
+            'aceptar_derivacion';
 
 
         let respuesta =
             `Perfecto. Para adquisición directa del ${nombreVehiculo(vehiculo)}`;
 
 
-        if (vehiculo.precioLista) {
+        if (
+            vehiculo.precioLista
+        ) {
 
             respuesta +=
                 ` el precio de lista es de ${vehiculo.precioLista}.`;
@@ -1424,7 +2029,7 @@ async function procesarMensaje(
 
 
         respuesta +=
-            ` Si querés una propuesta concreta, te contacto con ${seller.asesorDerivacion || 'Edgardo'}.`;
+            ` Si querés avanzar con una propuesta, te puedo poner en contacto con ${seller.asesorDerivacion || 'Edgardo'}.`;
 
 
         guardarHistorial(
@@ -1439,23 +2044,29 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // CLIENTE QUIERE AVANZAR
+    // AVANZAR
     // ========================================================
 
     if (
-        analisis.intenciones.includes('avanzar')
+        analisis.intenciones.includes(
+            'avanzar'
+        )
     ) {
 
         cliente.etapa =
             'esperando_horario';
+
+
+        cliente.esperandoRespuesta =
+            'horario_contacto';
+
 
         cliente.derivacionSolicitada =
             true;
 
 
         const respuesta =
-            `Perfecto. Te contacto con ${seller.asesorDerivacion || 'Edgardo'} para que continúe con vos. ` +
-            '¿Qué día y horario te queda cómodo?';
+            `Perfecto. ¿Qué día y horario te queda cómodo para que te contacte ${seller.asesorDerivacion || 'Edgardo'}?`;
 
 
         guardarHistorial(
@@ -1474,8 +2085,18 @@ async function procesarMensaje(
     // ========================================================
 
     if (
-        analisis.intenciones.includes('rechazo')
+        analisis.intenciones.includes(
+            'rechazo'
+        )
     ) {
+
+        cliente.esperandoRespuesta =
+            null;
+
+
+        cliente.opcionesEsperadas =
+            [];
+
 
         const respuesta =
             'Dale, no hay problema. Si más adelante necesitás información, escribime.';
@@ -1493,75 +2114,15 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // CONFIRMACIÓN SEGÚN CONTEXTO
-    // ========================================================
-
-    if (analisis.confirmacion) {
-
-        if (
-            cliente.etapa === 'financiacion'
-        ) {
-
-            cliente.etapa =
-                'esperando_derivacion';
-
-
-            const respuesta =
-                responderRequisitos(vehiculo);
-
-
-            guardarHistorial(
-                cliente,
-                'martin',
-                respuesta
-            );
-
-
-            return respuesta;
-        }
-
-
-        if (
-            cliente.etapa === 'esperando_derivacion'
-        ) {
-
-            cliente.etapa =
-                'esperando_horario';
-
-            cliente.derivacionSolicitada =
-                true;
-
-
-            const respuesta =
-                `Perfecto. ¿Qué día y horario te queda cómodo para que te contacte ${seller.asesorDerivacion || 'Edgardo'}?`;
-
-
-            guardarHistorial(
-                cliente,
-                'martin',
-                respuesta
-            );
-
-
-            return respuesta;
-        }
-    }
-
-
-    // ========================================================
-    // HORARIO DE CONTACTO
+    // CONFIRMACIÓN SIN CONTEXTO
     // ========================================================
 
     if (
-        cliente.etapa === 'esperando_horario'
+        analisis.confirmacion
     ) {
 
-        cliente.etapa =
-            'derivado';
-
-
         const respuesta =
-            `Perfecto. Queda registrado. ${seller.asesorDerivacion || 'Edgardo'} va a continuar con vos. Muchas gracias.`;
+            'Dale. ¿Qué otra información querés saber?';
 
 
         guardarHistorial(
@@ -1599,7 +2160,7 @@ async function procesarMensaje(
 
 
 // ============================================================
-// 11. ENDPOINT CHAT
+// 12. ENDPOINT CHAT
 // ============================================================
 
 app.post(
@@ -1644,7 +2205,7 @@ app.post(
 
 
 // ============================================================
-// 12. ENDPOINT DE ESTADO
+// 13. HEALTH
 // ============================================================
 
 app.get(
@@ -1674,7 +2235,7 @@ app.get(
 
 
 // ============================================================
-// 13. INICIO
+// 14. START
 // ============================================================
 
 const PORT =
@@ -1686,7 +2247,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - VERSIÓN HÍBRIDA'
+            '🚀 MARTIN IA SELLER - CONTEXTO V2'
         );
 
         console.log(
@@ -1702,7 +2263,7 @@ app.listen(
         );
 
         console.log(
-            `🧠 IA: Groq / llama-3.3-70b-versatile`
+            '🧠 IA: Groq / llama-3.3-70b-versatile'
         );
 
         console.log(
