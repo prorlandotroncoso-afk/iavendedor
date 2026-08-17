@@ -1,7 +1,7 @@
 // ============================================================
 // index.js
 // MARTIN IA SELLER
-// VERSIÓN HÍBRIDA + RESPUESTAS CONTEXTUALES
+// VERSIÓN HÍBRIDA + CONTEXTO + HORARIOS CONTROLADOS
 // ============================================================
 
 import express from 'express';
@@ -46,14 +46,12 @@ const groq = new Groq({
 // 3. MEMORIA TEMPORAL
 // ============================================================
 //
-// IMPORTANTE:
-//
-// Por ahora esta memoria vive en RAM.
+// Por ahora vive en RAM.
 //
 // Más adelante:
-// - estado persistente → Google Sheets
-// - leads → Google Sheets
-// - seguimientos → Google Sheets / scheduler
+// - Leads → Google Sheets
+// - Memoria persistente → Google Sheets
+// - Seguimientos → Google Sheets + scheduler
 //
 // ============================================================
 
@@ -74,17 +72,11 @@ function getCliente(userId) {
 
             historial: [],
 
-            // Qué respuesta espera Martin
             esperandoRespuesta: null,
 
-            // Opciones cuando Martin hace una pregunta doble
             opcionesEsperadas: [],
 
             derivacionSolicitada: false,
-
-            // ------------------------------------------------
-            // PREPARADO PARA SEGUIMIENTOS FUTUROS
-            // ------------------------------------------------
 
             ultimaInteraccion: Date.now(),
 
@@ -100,11 +92,7 @@ function getCliente(userId) {
 }
 
 
-function guardarHistorial(
-    cliente,
-    rol,
-    mensaje
-) {
+function guardarHistorial(cliente, rol, mensaje) {
 
     cliente.historial.push({
         rol,
@@ -146,10 +134,7 @@ function normalizar(texto = '') {
 }
 
 
-function contieneAlguna(
-    texto,
-    palabras
-) {
+function contieneAlguna(texto, palabras) {
 
     const t =
         normalizar(texto);
@@ -237,10 +222,7 @@ function esSaludo(texto) {
 }
 
 
-function nombreVehiculo(
-    vehiculo,
-    fallback
-) {
+function nombreVehiculo(vehiculo, fallback) {
 
     return (
         vehiculo?.modelo ||
@@ -251,12 +233,125 @@ function nombreVehiculo(
 
 
 // ============================================================
-// 5. DETECCIÓN DIRECTA DE MODELO
+// 5. DETECTAR REFERENCIA TEMPORAL
+// ============================================================
+//
+// IMPORTANTE:
+//
+// Martin NO debe considerar cualquier texto como horario.
+//
+// Ejemplos válidos:
+//
+// mañana a las 10
+// hoy a las 20
+// el lunes a la tarde
+// esta tarde
+// tipo 10 de la mañana
+// después de las 18
+// enseguida a las 8 de la noche
+//
+// Ejemplos NO válidos:
+//
+// detalle de las cuotas
+// esperá
+// ok
+// antes decime el precio
+//
 // ============================================================
 
-async function detectarModeloDirecto(
-    mensaje
-) {
+function tieneReferenciaTemporal(mensaje) {
+
+    const texto =
+        normalizar(mensaje);
+
+
+    const referencias = [
+
+        'hoy',
+        'manana',
+        'pasado manana',
+
+        'lunes',
+        'martes',
+        'miercoles',
+        'jueves',
+        'viernes',
+        'sabado',
+        'domingo',
+
+        'esta manana',
+        'esta tarde',
+        'esta noche',
+
+        'a la manana',
+        'por la manana',
+        'a la tarde',
+        'por la tarde',
+        'a la noche',
+        'por la noche',
+
+        'temprano',
+        'mediodia',
+        'medio dia',
+        'despues del mediodia',
+
+        'enseguida',
+        'en un rato'
+    ];
+
+
+    if (
+        referencias.some(
+            referencia =>
+                texto.includes(referencia)
+        )
+    ) {
+
+        return true;
+    }
+
+
+    // --------------------------------------------------------
+    // HORAS EXPLÍCITAS
+    // --------------------------------------------------------
+    //
+    // a las 8
+    // a las 20
+    // tipo 10
+    // tipo 10:30
+    // 18:00
+    // 8 pm
+    //
+    // --------------------------------------------------------
+
+    const patronesHora = [
+
+        /\ba las?\s+\d{1,2}(?::\d{2})?\b/,
+
+        /\btipo\s+\d{1,2}(?::\d{2})?\b/,
+
+        /\b\d{1,2}:\d{2}\b/,
+
+        /\b\d{1,2}\s*(am|pm)\b/,
+
+        /\bdespues de las?\s+\d{1,2}\b/,
+
+        /\bantes de las?\s+\d{1,2}\b/
+    ];
+
+
+    return patronesHora.some(
+        patron =>
+            patron.test(texto)
+    );
+}
+
+
+// ============================================================
+// 6. DETECCIÓN DIRECTA DE MODELO
+// ============================================================
+
+async function detectarModeloDirecto(mensaje) {
 
     const modelos =
         await listarModelosDisponibles();
@@ -284,9 +379,7 @@ async function detectarModeloDirecto(
             texto.includes(key) ||
             (
                 modeloCompleto &&
-                texto.includes(
-                    modeloCompleto
-                )
+                texto.includes(modeloCompleto)
             )
         ) {
 
@@ -300,12 +393,10 @@ async function detectarModeloDirecto(
 
 
 // ============================================================
-// 6. CLASIFICADOR LOCAL
+// 7. CLASIFICADOR LOCAL
 // ============================================================
 
-async function clasificarLocal(
-    mensaje
-) {
+async function clasificarLocal(mensaje) {
 
     const intenciones = [];
 
@@ -479,6 +570,20 @@ async function clasificarLocal(
     }
 
 
+    // ========================================================
+    // AVANZAR
+    // ========================================================
+    //
+    // IMPORTANTE:
+    //
+    // Ya NO alcanza con mencionar "Edgardo".
+    //
+    // "Antes de pasarme con Edgardo, dame las cuotas"
+    //
+    // NO significa avanzar todavía.
+    //
+    // ========================================================
+
     if (
         contieneAlguna(
             mensaje,
@@ -491,10 +596,11 @@ async function clasificarLocal(
                 'contactame',
                 'contactarme',
                 'que me llamen',
-                'hablar con alguien',
-                'hablar con un asesor',
+                'quiero hablar con alguien',
+                'quiero hablar con un asesor',
                 'pasame con edgardo',
-                'edgardo'
+                'comunícame con edgardo',
+                'comunicarme con edgardo'
             ]
         )
     ) {
@@ -533,19 +639,21 @@ async function clasificarLocal(
             esConfirmacionSimple(mensaje),
 
         negacion:
-            esNegacionSimple(mensaje)
+            esNegacionSimple(mensaje),
+
+        referenciaTemporal:
+            tieneReferenciaTemporal(mensaje)
     };
 }
 
 
 // ============================================================
-// 7. INTERPRETACIÓN CON GROQ
+// 8. INTERPRETACIÓN CON QWEN
 // ============================================================
 //
-// GROQ NO RESPONDE ACÁ.
+// Qwen NO responde al cliente.
 //
-// Solo interpreta qué quiso decir
-// el cliente.
+// Solamente interpreta el mensaje.
 //
 // ============================================================
 
@@ -585,11 +693,10 @@ async function interpretarMensaje(
         const prompt = `
 ${seller.prompt}
 
-Tu única tarea ahora es CLASIFICAR el mensaje del cliente.
+Tu única tarea es CLASIFICAR el mensaje del cliente.
 
 NO respondas al cliente.
-NO des información comercial.
-NO inventes nada.
+NO inventes información comercial.
 
 Devolvé ÚNICAMENTE JSON válido.
 
@@ -612,44 +719,36 @@ avanzar
 rechazo
 otro
 
-IMPORTANTE:
+REGLAS IMPORTANTES:
 
-Una frase puede tener MÁS DE UNA intención.
+1. Una frase puede tener MÁS DE UNA intención.
 
-Ejemplos:
+2. Las consultas de información tienen prioridad conceptual
+sobre una posible derivación.
 
-"Sí me sirve, pero ¿las cuotas cuánto son?"
+Ejemplo:
 
-intenciones:
-["cuotas"]
+"Antes de pasarme con Edgardo,
+dame el detalle de las cuotas"
 
-confirmacion:
-true
+debe detectar:
+intenciones = ["cuotas"]
 
+NO debe asumir que ya quiere ser derivado.
 
-"Quiero avanzar con el 2008"
+3. Mencionar a Edgardo no significa automáticamente avanzar.
 
-modelo:
-"2008"
+4. Solo detectar "avanzar" cuando exista una intención clara
+de hablar con el asesor o continuar el proceso.
 
-intenciones:
-["avanzar"]
+5. "Ok", "dale" o "sí" dependen del contexto.
 
+6. "Detalle de las cuotas" nunca es un horario.
 
-"¿Y el resto?"
+7. Si el cliente hace otra pregunta mientras se estaba coordinando
+un contacto, priorizá la nueva pregunta.
 
-Si el historial reciente habla de cuotas,
-debe interpretarse como intención "cuotas".
-
-
-"Ok"
-
-NO significa automáticamente avanzar.
-
-Debe interpretarse usando ESPERANDO RESPUESTA.
-
-
-CONTEXTO ACTUAL:
+CONTEXTO:
 
 Etapa:
 ${cliente.etapa}
@@ -666,16 +765,13 @@ ${cliente.esperandoRespuesta || 'ninguna'}
 Opciones esperadas:
 ${JSON.stringify(cliente.opcionesEsperadas || [])}
 
-
-HISTORIAL RECIENTE:
+HISTORIAL:
 
 ${historialReciente || 'Sin historial'}
 
-
-MENSAJE DEL CLIENTE:
+MENSAJE:
 
 "${mensaje}"
-
 
 FORMATO EXACTO:
 
@@ -812,14 +908,17 @@ FORMATO EXACTO:
 
             negacion:
                 respaldo.negacion ||
-                json.negacion === true
+                json.negacion === true,
+
+            referenciaTemporal:
+                respaldo.referenciaTemporal
         };
 
 
     } catch (error) {
 
         console.error(
-            '⚠️ Falló clasificación Groq:',
+            '⚠️ Falló clasificación Qwen:',
             error.message
         );
 
@@ -830,7 +929,7 @@ FORMATO EXACTO:
 
 
 // ============================================================
-// 8. RESPUESTAS CONTROLADAS
+// 9. RESPUESTAS CONTROLADAS
 // ============================================================
 
 function responderFinanciacion(
@@ -1223,7 +1322,7 @@ function responderMaterial(
 
 
 // ============================================================
-// 9. RESPUESTA IA SEGURA
+// 10. RESPUESTA IA SEGURA
 // ============================================================
 
 async function respuestaSeguraIA(
@@ -1263,7 +1362,7 @@ REGLAS:
 
 2. NO inventes.
 
-3. NO hagas cálculos que no estén expresamente disponibles.
+3. NO hagas cálculos no disponibles.
 
 4. NO deduzcas valores.
 
@@ -1274,7 +1373,7 @@ REGLAS:
 "sistema",
 "según la base".
 
-6. Si no tenés la información:
+6. Si falta información:
 "No tengo esa información disponible en este momento. Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}."
 
 7. Usá voseo argentino.
@@ -1283,7 +1382,7 @@ REGLAS:
 
 9. No vendas.
 
-10. No repitas información que el cliente no pidió.
+10. No repitas información innecesaria.
 
 Respondé directamente.
 `;
@@ -1318,7 +1417,7 @@ Respondé directamente.
         if (!respuesta) {
 
             throw new Error(
-                'Groq devolvió respuesta vacía'
+                'Qwen devolvió respuesta vacía'
             );
         }
 
@@ -1329,7 +1428,7 @@ Respondé directamente.
     } catch (error) {
 
         console.error(
-            '⚠️ Error Groq:',
+            '⚠️ Error Qwen:',
             error.message
         );
 
@@ -1343,7 +1442,7 @@ Respondé directamente.
 
 
 // ============================================================
-// 10. RESPUESTAS ESPERADAS
+// 11. RESPUESTAS ESPERADAS
 // ============================================================
 
 async function procesarRespuestaEsperada(
@@ -1354,54 +1453,13 @@ async function procesarRespuestaEsperada(
 ) {
 
     // --------------------------------------------------------
-    // ELECCIÓN ENTRE REQUISITOS O CUOTAS
+    // REQUISITOS O CUOTAS
     // --------------------------------------------------------
 
     if (
         cliente.esperandoRespuesta ===
         'elegir_info_financiacion'
     ) {
-
-        if (
-            analisis.intenciones.includes(
-                'cuotas'
-            )
-        ) {
-
-            cliente.esperandoRespuesta =
-                'aceptar_derivacion';
-
-
-            cliente.opcionesEsperadas = [];
-
-
-            return responderCuotas(
-                vehiculo
-            );
-        }
-
-
-        if (
-            analisis.intenciones.includes(
-                'requisitos'
-            )
-        ) {
-
-            cliente.esperandoRespuesta =
-                'aceptar_derivacion';
-
-
-            cliente.opcionesEsperadas = [];
-
-
-            return responderRequisitos(
-                vehiculo
-            );
-        }
-
-
-        // "dale", "sí", "ok"
-        // no alcanza para saber cuál quiere.
 
         if (
             analisis.confirmacion
@@ -1475,7 +1533,7 @@ async function procesarRespuestaEsperada(
     ) {
 
         if (
-            mensaje.length >= 2
+            analisis.referenciaTemporal
         ) {
 
             cliente.esperandoRespuesta =
@@ -1489,13 +1547,18 @@ async function procesarRespuestaEsperada(
             // FUTURO:
             //
             // guardarLead(...)
-            // en Google Sheets.
+            // Google Sheets
 
 
             return (
                 `Perfecto. Queda registrado. ${seller.asesorDerivacion || 'Edgardo'} va a continuar con vos. Muchas gracias.`
             );
         }
+
+
+        return (
+            `Dale. Para coordinar con ${seller.asesorDerivacion || 'Edgardo'}, decime qué día o en qué horario te queda cómodo.`
+        );
     }
 
 
@@ -1504,7 +1567,7 @@ async function procesarRespuestaEsperada(
 
 
 // ============================================================
-// 11. PROCESAR MENSAJE
+// 12. PROCESAR MENSAJE
 // ============================================================
 
 async function procesarMensaje(
@@ -1536,9 +1599,6 @@ async function procesarMensaje(
         mensaje
     );
 
-
-    // Cada vez que el cliente responde,
-    // cancelamos futuros flags de seguimiento.
 
     cliente.seguimiento20mEnviado =
         false;
@@ -1654,7 +1714,7 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // OBTENER VEHÍCULO
+    // VEHÍCULO
     // ========================================================
 
     const vehiculo =
@@ -1683,96 +1743,19 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // RESPUESTA ESPERADA
+    // PRIORIDAD ABSOLUTA:
+    // PREGUNTAS COMERCIALES EXPLÍCITAS
+    // ========================================================
+    //
+    // Esto ocurre ANTES de procesar una derivación pendiente.
+    //
+    // "Antes de pasarme con Edgardo,
+    // dame las cuotas"
+    //
+    // → responde cuotas.
+    //
     // ========================================================
 
-    const respuestaEsperada =
-        await procesarRespuestaEsperada(
-            mensaje,
-            cliente,
-            analisis,
-            vehiculo
-        );
-
-
-    if (
-        respuestaEsperada
-    ) {
-
-        guardarHistorial(
-            cliente,
-            'martin',
-            respuestaEsperada
-        );
-
-
-        return respuestaEsperada;
-    }
-
-
-    // ========================================================
-    // MODELO NUEVO
-    // ========================================================
-
-    const preguntasComerciales = [
-
-        'financiacion',
-        'directa',
-        'cuotas',
-        'requisitos',
-        'precio',
-        'entrega',
-        'equipamiento',
-        'material',
-        'avanzar'
-    ];
-
-
-    const tienePreguntaComercial =
-        analisis.intenciones.some(
-            i =>
-                preguntasComerciales.includes(i)
-        );
-
-
-    if (
-        analisis.modelo &&
-        !tienePreguntaComercial
-    ) {
-
-        cliente.etapa =
-            'esperando_metodo';
-
-
-        cliente.esperandoRespuesta =
-            'metodo_compra';
-
-
-        cliente.opcionesEsperadas = [
-            'directa',
-            'financiacion'
-        ];
-
-
-        const respuesta =
-            `Perfecto. Tengo información del ${nombreVehiculo(vehiculo)}. ` +
-            '¿Buscás adquisición directa o financiación de fábrica?';
-
-
-        guardarHistorial(
-            cliente,
-            'martin',
-            respuesta
-        );
-
-
-        return respuesta;
-    }
-
-
-    // ========================================================
-    // PREGUNTAS COMERCIALES
-    // ========================================================
 
     if (
         analisis.intenciones.includes(
@@ -2044,7 +2027,95 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // AVANZAR
+    // MODELO NUEVO
+    // ========================================================
+
+    const preguntasComerciales = [
+
+        'financiacion',
+        'directa',
+        'cuotas',
+        'requisitos',
+        'precio',
+        'entrega',
+        'equipamiento',
+        'material',
+        'avanzar'
+    ];
+
+
+    const tienePreguntaComercial =
+        analisis.intenciones.some(
+            i =>
+                preguntasComerciales.includes(i)
+        );
+
+
+    if (
+        analisis.modelo &&
+        !tienePreguntaComercial
+    ) {
+
+        cliente.etapa =
+            'esperando_metodo';
+
+
+        cliente.esperandoRespuesta =
+            'metodo_compra';
+
+
+        cliente.opcionesEsperadas = [
+            'directa',
+            'financiacion'
+        ];
+
+
+        const respuesta =
+            `Perfecto. Tengo información del ${nombreVehiculo(vehiculo)}. ` +
+            '¿Buscás adquisición directa o financiación de fábrica?';
+
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuesta
+        );
+
+
+        return respuesta;
+    }
+
+
+    // ========================================================
+    // RESPUESTAS ESPERADAS
+    // ========================================================
+
+    const respuestaEsperada =
+        await procesarRespuestaEsperada(
+            mensaje,
+            cliente,
+            analisis,
+            vehiculo
+        );
+
+
+    if (
+        respuestaEsperada
+    ) {
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuestaEsperada
+        );
+
+
+        return respuestaEsperada;
+    }
+
+
+    // ========================================================
+    // AVANZAR EXPLÍCITAMENTE
     // ========================================================
 
     if (
@@ -2160,7 +2231,7 @@ async function procesarMensaje(
 
 
 // ============================================================
-// 12. ENDPOINT CHAT
+// 13. ENDPOINT CHAT
 // ============================================================
 
 app.post(
@@ -2205,7 +2276,7 @@ app.post(
 
 
 // ============================================================
-// 13. HEALTH
+// 14. HEALTH
 // ============================================================
 
 app.get(
@@ -2235,7 +2306,7 @@ app.get(
 
 
 // ============================================================
-// 14. START
+// 15. START
 // ============================================================
 
 const PORT =
@@ -2247,7 +2318,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - CONTEXTO V2'
+            '🚀 MARTIN IA SELLER - CONTEXTO + HORARIOS V3'
         );
 
         console.log(
@@ -2263,7 +2334,7 @@ app.listen(
         );
 
         console.log(
-            '🧠 IA: Groq / qwen/qwen3.6-27b'
+            '🧠 IA: Groq / Qwen 3.6 27B'
         );
 
         console.log(
