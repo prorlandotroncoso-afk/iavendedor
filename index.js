@@ -692,7 +692,7 @@ FORMATO EXACTO:
             await groq.chat.completions.create({
 
                 model:
-                    'llama-3.3-70b-versatile',
+                    'qwen/qwen3.6-27b',
 
                 messages: [
                     {
@@ -1293,7 +1293,7 @@ Respondé directamente.
             await groq.chat.completions.create({
 
                 model:
-                    'llama-3.3-70b-versatile',
+                    'qwen/qwen3.6-27b',
 
                 messages: [
                     {
@@ -2263,7 +2263,7 @@ app.listen(
         );
 
         console.log(
-            '🧠 IA: Groq / llama-3.3-70b-versatile'
+            '🧠 IA: Groq / qwen/qwen3.6-27b'
         );
 
         console.log(
