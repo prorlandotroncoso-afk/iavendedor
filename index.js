@@ -43,6 +43,29 @@ const groq = new Groq({
 
 
 // ============================================================
+// WHATSAPP CLOUD API - CONFIGURACIÓN
+// ============================================================
+//
+// Estas variables se configuran en Render.
+// No escribir tokens ni secretos directamente en este archivo.
+//
+// ============================================================
+
+const WHATSAPP_TOKEN =
+    process.env.WHATSAPP_TOKEN;
+
+const WHATSAPP_PHONE_NUMBER_ID =
+    process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+const WHATSAPP_VERIFY_TOKEN =
+    process.env.WHATSAPP_VERIFY_TOKEN;
+
+const WHATSAPP_API_VERSION =
+    process.env.WHATSAPP_API_VERSION || 'v25.0';
+
+
+
+// ============================================================
 // 3. MEMORIA TEMPORAL
 // ============================================================
 //
@@ -2228,6 +2251,220 @@ async function procesarMensaje(
 
     return respuesta;
 }
+
+
+// ============================================================
+// WHATSAPP CLOUD API - ENVIAR MENSAJE
+// ============================================================
+
+async function enviarMensajeWhatsApp(
+    numeroDestino,
+    mensaje
+) {
+
+    if (
+        !WHATSAPP_TOKEN ||
+        !WHATSAPP_PHONE_NUMBER_ID
+    ) {
+
+        throw new Error(
+            'Faltan WHATSAPP_TOKEN o WHATSAPP_PHONE_NUMBER_ID en Render'
+        );
+    }
+
+
+    const url =
+        `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+
+    const response =
+        await fetch(
+            url,
+            {
+                method: 'POST',
+
+                headers: {
+                    'Authorization':
+                        `Bearer ${WHATSAPP_TOKEN}`,
+
+                    'Content-Type':
+                        'application/json'
+                },
+
+                body:
+                    JSON.stringify({
+                        messaging_product:
+                            'whatsapp',
+
+                        recipient_type:
+                            'individual',
+
+                        to:
+                            numeroDestino,
+
+                        type:
+                            'text',
+
+                        text: {
+                            preview_url:
+                                false,
+
+                            body:
+                                mensaje
+                        }
+                    })
+            }
+        );
+
+
+    if (!response.ok) {
+
+        const errorBody =
+            await response.text();
+
+
+        throw new Error(
+            `WhatsApp API ${response.status}: ${errorBody}`
+        );
+    }
+
+
+    return response.json();
+}
+
+
+// ============================================================
+// WHATSAPP CLOUD API - VERIFICACIÓN DEL WEBHOOK
+// ============================================================
+
+app.get(
+    '/webhook',
+    (req, res) => {
+
+        const mode =
+            req.query['hub.mode'];
+
+        const token =
+            req.query['hub.verify_token'];
+
+        const challenge =
+            req.query['hub.challenge'];
+
+
+        if (
+            mode === 'subscribe' &&
+            token === WHATSAPP_VERIFY_TOKEN
+        ) {
+
+            console.log(
+                '✅ Webhook de WhatsApp verificado por Meta'
+            );
+
+
+            return res
+                .status(200)
+                .send(challenge);
+        }
+
+
+        console.warn(
+            '⚠️ Intento de verificación de webhook rechazado'
+        );
+
+
+        return res.sendStatus(403);
+    }
+);
+
+
+// ============================================================
+// WHATSAPP CLOUD API - RECIBIR MENSAJES
+// ============================================================
+
+app.post(
+    '/webhook',
+    (req, res) => {
+
+        res.sendStatus(200);
+
+
+        const body =
+            req.body;
+
+
+        const mensaje =
+            body?.entry?.[0]
+                ?.changes?.[0]
+                ?.value
+                ?.messages?.[0];
+
+
+        if (!mensaje) {
+
+            return;
+        }
+
+
+        if (
+            mensaje.type !== 'text' ||
+            !mensaje.text?.body
+        ) {
+
+            console.log(
+                `ℹ️ WhatsApp recibió mensaje tipo "${mensaje.type}" - ignorado por ahora`
+            );
+
+
+            return;
+        }
+
+
+        const numeroCliente =
+            mensaje.from;
+
+
+        const textoCliente =
+            mensaje.text.body;
+
+
+        console.log(
+            `📲 WhatsApp entrante de ${numeroCliente}: ${textoCliente}`
+        );
+
+
+        (async () => {
+
+            try {
+
+                const respuestaMartin =
+                    await procesarMensaje(
+                        textoCliente,
+                        numeroCliente
+                    );
+
+
+                await enviarMensajeWhatsApp(
+                    numeroCliente,
+                    respuestaMartin
+                );
+
+
+                console.log(
+                    `✅ WhatsApp respondido a ${numeroCliente}`
+                );
+
+
+            } catch (error) {
+
+                console.error(
+                    '❌ Error procesando WhatsApp:',
+                    error
+                );
+            }
+
+        })();
+    }
+);
 
 
 // ============================================================
