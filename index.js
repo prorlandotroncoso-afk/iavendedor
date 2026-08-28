@@ -2385,6 +2385,7 @@ app.post(
     '/webhook',
     (req, res) => {
 
+        console.log('📩 WEBHOOK RECIBIDO:', JSON.stringify(req.body, null, 2));
         res.sendStatus(200);
 
 
