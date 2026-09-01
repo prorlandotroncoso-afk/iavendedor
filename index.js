@@ -102,6 +102,12 @@ function getCliente(userId) {
 
             decisionCompra: null,
 
+            calificacionCompletada: false,
+
+            llamadaConjuntaOfrecida: false,
+
+            llamadaConjuntaRechazada: false,
+
             historial: [],
 
             esperandoRespuesta: null,
@@ -1142,6 +1148,19 @@ de hablar con el asesor o continuar el proceso.
 7. Si el cliente hace otra pregunta mientras se estaba coordinando
 un contacto, priorizá la nueva pregunta.
 
+8. Interpretá el SIGNIFICADO del mensaje usando el historial, no solamente palabras exactas.
+Ejemplos: "¿y cómo era el plan?", "¿y la financiación?", "recordame cómo se paga"
+pueden significar financiacion aunque no coincidan con una frase programada.
+
+9. Si una pregunta ya fue respondida o una etapa de calificación ya se completó,
+NO interpretes una nueva consulta como pedido de reiniciar esa etapa.
+
+10. Si el cliente rechaza una llamada pero pide información ahora,
+la negación corresponde a la llamada y debe continuar la conversación comercial.
+
+11. Usá el último mensaje de Martín para resolver referencias como "eso", "el detalle",
+"sí", "no", "pasame eso" o "y lo otro".
+
 CONTEXTO:
 
 Etapa:
@@ -1152,6 +1171,18 @@ ${cliente.modelo || 'ninguno'}
 
 Método:
 ${cliente.metodo || 'ninguno'}
+
+Uso del vehículo ya informado:
+${cliente.usoVehiculo || 'no'}
+
+Decisión de compra ya informada:
+${cliente.decisionCompra || 'no'}
+
+Calificación completada:
+${cliente.calificacionCompletada === true ? 'sí' : 'no'}
+
+Llamada conjunta rechazada:
+${cliente.llamadaConjuntaRechazada === true ? 'sí' : 'no'}
 
 Esperando respuesta:
 ${cliente.esperandoRespuesta || 'ninguna'}
@@ -1820,6 +1851,37 @@ function responderMaterial(
 }
 
 
+function normalizarEstiloMartin(texto) {
+
+    let salida = String(texto || '').trim();
+
+    const reemplazos = [
+        [/\btú\b/gi, 'vos'],
+        [/\bquieres\b/gi, 'querés'],
+        [/\bpuedes\b/gi, 'podés'],
+        [/\btienes\b/gi, 'tenés'],
+        [/\bdime\b/gi, 'decime'],
+        [/\bcuéntame\b/gi, 'contame'],
+        [/\bcuentame\b/gi, 'contame'],
+        [/\bnecesitas\b/gi, 'necesitás'],
+        [/\bentiendes\b/gi, 'entendés'],
+        [/\bte interesa\b/gi, 'te interesa']
+    ];
+
+    for (const [patron, reemplazo] of reemplazos) {
+        salida = salida.replace(patron, reemplazo);
+    }
+
+    // Martín usa voseo profesional, pero nunca "che".
+    salida = salida
+        .replace(/(^|[\s,.;:!?])che([\s,.;:!?]|$)/gi, '$1$2')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    return salida;
+}
+
+
 // ============================================================
 // 10. RESPUESTA IA SEGURA
 // ============================================================
@@ -1875,17 +1937,25 @@ REGLAS:
 6. Si falta información:
 "No tengo esa información disponible en este momento. Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}."
 
-7. Usá voseo argentino.
+7. Usá español argentino rioplatense profesional y voseo natural: vos, querés, podés, tenés, decime, contame.
 
-8. Máximo 3 oraciones.
+8. Nunca uses tuteo: no uses tú, quieres, puedes, tienes, dime, cuéntame ni formas equivalentes.
 
-9. No vendas.
+9. Nunca uses "che". No caricaturices el habla argentina ni uses modismos excesivos.
 
-10. No repitas información innecesaria.
+10. Mantené un tono amable, calmo, comercial y no agresivo. Nunca presiones, regañes, confrontes ni des órdenes fuertes.
 
-11. Si informás un monto en pesos, usá formato argentino con signo $ y separadores de miles.
+11. Si el cliente rechaza una llamada o propuesta, aceptalo con naturalidad y seguí ayudándolo con la información que pida.
 
-12. Si informás gastos de entrega, decí SIEMPRE que son "aproximadamente" ese monto.
+12. Máximo 3 oraciones.
+
+13. No vendas ni negocies.
+
+14. No repitas información innecesaria.
+
+15. Si informás un monto en pesos, usá formato argentino con signo $ y separadores de miles.
+
+16. Si informás gastos de entrega, decí SIEMPRE que son "aproximadamente" ese monto.
 
 Respondé directamente.
 `;
@@ -1930,9 +2000,11 @@ Respondé directamente.
         // Capa de seguridad adicional: nunca enviar razonamiento interno
         // al cliente aunque el proveedor cambiara el formato de salida.
         let respuesta =
-            String(respuestaCruda)
-                .replace(/<think>[\s\S]*?<\/think>/gi, '')
-                .trim();
+            normalizarEstiloMartin(
+                String(respuestaCruda)
+                    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                    .trim()
+            );
 
 
         if (
@@ -2015,9 +2087,15 @@ async function procesarRespuestaEsperada(
         cliente.decisionCompra =
             String(mensaje || '').trim();
 
+        cliente.calificacionCompletada =
+            true;
+
         if (
             decisionEsCompartida(mensaje)
         ) {
+
+            cliente.llamadaConjuntaOfrecida =
+                true;
 
             cliente.esperandoRespuesta =
                 'aceptar_llamada_conjunta';
@@ -2074,6 +2152,9 @@ async function procesarRespuestaEsperada(
         if (
             analisis.negacion
         ) {
+
+            cliente.llamadaConjuntaRechazada =
+                true;
 
             cliente.esperandoRespuesta =
                 'elegir_info_financiacion';
@@ -2704,6 +2785,63 @@ async function procesarMensaje(
 
         cliente.etapa =
             'financiacion';
+
+
+        // La calificación comercial se hace una sola vez por conversación.
+        // Si el cliente vuelve a preguntar por financiación, Martín responde
+        // la información y no reinicia las preguntas de uso/decisión.
+        if (
+            cliente.calificacionCompletada ||
+            (cliente.usoVehiculo && cliente.decisionCompra)
+        ) {
+
+            cliente.calificacionCompletada =
+                true;
+
+            cliente.esperandoRespuesta =
+                'elegir_info_financiacion';
+
+            cliente.opcionesEsperadas = [
+                'requisitos',
+                'cuotas'
+            ];
+
+            const respuesta =
+                responderFinanciacion(vehiculo);
+
+            guardarHistorial(
+                cliente,
+                'martin',
+                respuesta
+            );
+
+            return respuesta;
+        }
+
+
+        // Si ya respondió para qué necesita el vehículo pero faltó la segunda
+        // pregunta, retomamos exactamente donde quedó en vez de volver al inicio.
+        if (
+            cliente.usoVehiculo &&
+            !cliente.decisionCompra
+        ) {
+
+            cliente.esperandoRespuesta =
+                'decision_compra';
+
+            cliente.opcionesEsperadas = [];
+
+            const respuesta =
+                'Perfecto. Y te consulto una cosa más: ¿la decisión la tomás vos solo o con alguien más?';
+
+            guardarHistorial(
+                cliente,
+                'martin',
+                respuesta
+            );
+
+            return respuesta;
+        }
 
 
         cliente.esperandoRespuesta =
