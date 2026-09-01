@@ -1175,6 +1175,12 @@ FORMATO EXACTO:
                 model:
                     'qwen/qwen3.6-27b',
 
+                reasoning_effort:
+                    'none',
+
+                reasoning_format:
+                    'hidden',
+
                 messages: [
                     {
                         role: 'system',
@@ -1882,6 +1888,12 @@ Respondé directamente.
                 model:
                     'qwen/qwen3.6-27b',
 
+                reasoning_effort:
+                    'none',
+
+                reasoning_format:
+                    'hidden',
+
                 messages: [
                     {
                         role: 'system',
@@ -1899,22 +1911,38 @@ Respondé directamente.
             });
 
 
-        const respuesta =
+        const respuestaCruda =
             response
                 .choices?.[0]
                 ?.message
-                ?.content;
+                ?.content || '';
+
+
+        // Capa de seguridad adicional: nunca enviar razonamiento interno
+        // al cliente aunque el proveedor cambiara el formato de salida.
+        let respuesta =
+            String(respuestaCruda)
+                .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                .trim();
+
+
+        if (
+            /<think>/i.test(respuesta)
+        ) {
+
+            respuesta = '';
+        }
 
 
         if (!respuesta) {
 
             throw new Error(
-                'Qwen devolvió respuesta vacía'
+                'Qwen devolvió respuesta vacía o razonamiento interno'
             );
         }
 
 
-        return respuesta.trim();
+        return respuesta;
 
 
     } catch (error) {
@@ -2066,6 +2094,35 @@ async function procesarRespuestaEsperada(
         cliente.esperandoRespuesta ===
         'elegir_info_financiacion'
     ) {
+
+        // Si Martín acaba de ofrecer "requisitos o detalle de cuotas",
+        // expresiones naturales como "pasame el detalle" deben
+        // interpretarse como detalle de CUOTAS sin depender de Qwen.
+        if (
+            contieneAlguna(
+                mensaje,
+                [
+                    'pasame el detalle',
+                    'pásame el detalle',
+                    'dame el detalle',
+                    'el detalle',
+                    'detalle'
+                ]
+            )
+        ) {
+
+            cliente.etapa =
+                'consultando_cuotas';
+
+            cliente.esperandoRespuesta =
+                'aceptar_derivacion';
+
+            cliente.opcionesEsperadas = [];
+
+            return responderCuotas(
+                vehiculo
+            );
+        }
 
         if (
             analisis.confirmacion
