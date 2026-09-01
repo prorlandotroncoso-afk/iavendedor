@@ -3,387 +3,129 @@
 // FUENTE DE DATOS DE MARTIN
 // ============================================================
 //
-// FUENTE PRINCIPAL:
-// Google Sheets
-//
-// RESPALDO:
-// sellers/martin-autos/campaigns.json
-//
-// Si Sheets falla, Martin sigue funcionando
-// automáticamente con el JSON local.
+// FUENTE PRINCIPAL: Google Sheets
+// RESPALDO: sellers/martin-autos/campaigns.json
 // ============================================================
 
 import fs from 'fs';
 import path from 'path';
-import {
-    fileURLToPath
-} from 'url';
+import { fileURLToPath } from 'url';
 
 import {
     listarVehiculosDesdeSheets,
     obtenerVehiculoDesdeSheets
 } from '../config/googleSheets.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// ============================================================
-// PATHS
-// ============================================================
-
-const __filename =
-    fileURLToPath(
-        import.meta.url
-    );
-
-const __dirname =
-    path.dirname(
-        __filename
-    );
-
-
-const CAMPAIGNS_PATH =
-    path.join(
-        __dirname,
-        '..',
-        'sellers',
-        'martin-autos',
-        'campaigns.json'
-    );
-
-
-// ============================================================
-// CONFIGURACIÓN
-// ============================================================
+const CAMPAIGNS_PATH = path.join(
+    __dirname,
+    '..',
+    'sellers',
+    'martin-autos',
+    'campaigns.json'
+);
 
 function usarGoogleSheets() {
-
-    return (
-        String(
-            process.env.USE_GOOGLE_SHEETS || ''
-        )
-            .toLowerCase()
-            .trim()
-        === 'true'
-    );
+    return String(process.env.USE_GOOGLE_SHEETS || '')
+        .toLowerCase()
+        .trim() === 'true';
 }
 
-
-// ============================================================
-// VALIDAR OBJETO VEHÍCULO
-// ============================================================
-
-function vehiculoTieneDatos(
-    vehiculo
-) {
-
-    if (!vehiculo) {
+function vehiculoTieneDatos(vehiculo) {
+    if (!vehiculo || typeof vehiculo !== 'object') {
         return false;
     }
 
-
-    if (
-        typeof vehiculo !==
-        'object'
-    ) {
-
-        return false;
-    }
-
-
-    return (
-        Object.keys(
-            vehiculo
-        ).length > 0
-    );
+    return Object.keys(vehiculo).length > 0;
 }
-
-
-// ============================================================
-// CARGAR JSON LOCAL
-// ============================================================
 
 function cargarCampaignsLocal() {
-
     try {
-
-        if (
-            !fs.existsSync(
-                CAMPAIGNS_PATH
-            )
-        ) {
-
-            console.error(
-                '❌ No existe campaigns.json:',
-                CAMPAIGNS_PATH
-            );
-
+        if (!fs.existsSync(CAMPAIGNS_PATH)) {
+            console.error('❌ No existe campaigns.json:', CAMPAIGNS_PATH);
             return {};
         }
 
-
-        const contenido =
-            fs.readFileSync(
-                CAMPAIGNS_PATH,
-                'utf-8'
-            );
-
-
-        return JSON.parse(
-            contenido
-        );
-
-
+        const contenido = fs.readFileSync(CAMPAIGNS_PATH, 'utf-8');
+        return JSON.parse(contenido);
     } catch (error) {
-
-        console.error(
-            '❌ Error leyendo campaigns.json:',
-            error.message
-        );
-
-
+        console.error('❌ Error leyendo campaigns.json:', error.message);
         return {};
     }
 }
 
-
-// ============================================================
-// NORMALIZAR KEY
-// ============================================================
-
-function normalizarKey(
-    valor
-) {
-
-    return String(
-        valor || ''
-    )
-        .trim()
-        .toLowerCase();
+function normalizarKey(valor) {
+    return String(valor || '').trim().toLowerCase();
 }
 
-
-// ============================================================
-// LISTAR MODELOS
-// ============================================================
-
 export async function listarModelosDisponibles() {
-
-    // ========================================================
-    // 1. GOOGLE SHEETS
-    // ========================================================
-
-    if (
-        usarGoogleSheets()
-    ) {
-
+    if (usarGoogleSheets()) {
         try {
+            const vehiculosSheets = await listarVehiculosDesdeSheets();
 
-            const vehiculosSheets =
-                await listarVehiculosDesdeSheets();
+            if (Array.isArray(vehiculosSheets) && vehiculosSheets.length > 0) {
+                const vehiculosValidos = vehiculosSheets
+                    .filter(vehiculo => vehiculoTieneDatos(vehiculo))
+                    .filter(vehiculo => vehiculo.activo !== false)
+                    .map(vehiculo => {
+                        const key = normalizarKey(vehiculo.key || vehiculo.codigo);
+                        return { ...vehiculo, key };
+                    })
+                    .filter(vehiculo => vehiculo.key);
 
-
-            if (
-                Array.isArray(
-                    vehiculosSheets
-                ) &&
-                vehiculosSheets.length > 0
-            ) {
-
-                const vehiculosValidos =
-                    vehiculosSheets
-                        .filter(
-                            vehiculo =>
-                                vehiculoTieneDatos(
-                                    vehiculo
-                                )
-                        )
-                        .filter(
-                            vehiculo =>
-                                vehiculo.activo !== false
-                        )
-                        .map(
-                            vehiculo => {
-
-                                const key =
-                                    normalizarKey(
-                                        vehiculo.key ||
-                                        vehiculo.codigo
-                                    );
-
-
-                                return {
-                                    ...vehiculo,
-                                    key
-                                };
-                            }
-                        )
-                        .filter(
-                            vehiculo =>
-                                vehiculo.key
-                        );
-
-
-                if (
-                    vehiculosValidos.length > 0
-                ) {
-
+                if (vehiculosValidos.length > 0) {
                     return vehiculosValidos;
                 }
             }
 
-
-            console.warn(
-                '⚠️ Sheets no devolvió vehículos. Uso campaigns.json.'
-            );
-
-
+            console.warn('⚠️ Sheets no devolvió vehículos. Uso campaigns.json.');
         } catch (error) {
-
-            console.error(
-                '⚠️ No se pudo leer Google Sheets:',
-                error.message
-            );
-
-
-            console.log(
-                '📂 Usando campaigns.json como respaldo.'
-            );
+            console.error('⚠️ No se pudo leer Google Sheets:', error.message);
+            console.log('📂 Usando campaigns.json como respaldo.');
         }
     }
 
+    const campaigns = cargarCampaignsLocal();
 
-    // ========================================================
-    // 2. JSON LOCAL
-    // ========================================================
-
-    const campaigns =
-        cargarCampaignsLocal();
-
-
-    return Object
-        .entries(
-            campaigns
-        )
-        .filter(
-            ([_, data]) =>
-                vehiculoTieneDatos(
-                    data
-                )
-        )
-        .filter(
-            ([_, data]) =>
-                data.activo !== false
-        )
-        .map(
-            ([key, data]) => ({
-
-                ...data,
-
-                key:
-                    normalizarKey(
-                        key
-                    )
-            })
-        );
+    return Object.entries(campaigns)
+        .filter(([_, data]) => vehiculoTieneDatos(data))
+        .filter(([_, data]) => data.activo !== false)
+        .map(([key, data]) => ({
+            ...data,
+            key: normalizarKey(key)
+        }));
 }
 
-
-// ============================================================
-// OBTENER VEHÍCULO
-// ============================================================
-
-export async function obtenerVehiculo(
-    modeloKey
-) {
-
+export async function obtenerVehiculo(modeloKey) {
     if (!modeloKey) {
-
         return null;
     }
 
+    const key = normalizarKey(modeloKey);
 
-    const key =
-        normalizarKey(
-            modeloKey
-        );
-
-
-    // ========================================================
-    // 1. GOOGLE SHEETS
-    // ========================================================
-
-    if (
-        usarGoogleSheets()
-    ) {
-
+    if (usarGoogleSheets()) {
         try {
+            const vehiculoSheets = await obtenerVehiculoDesdeSheets(key);
 
-            const vehiculoSheets =
-                await obtenerVehiculoDesdeSheets(
-                    key
-                );
-
-
-            if (
-                vehiculoTieneDatos(
-                    vehiculoSheets
-                )
-            ) {
-
-                return {
-
-                    ...vehiculoSheets,
-
-                    key
-                };
+            if (vehiculoTieneDatos(vehiculoSheets)) {
+                return { ...vehiculoSheets, key };
             }
 
-
-            console.warn(
-                `⚠️ ${key} no apareció en Sheets. Buscando respaldo local.`
-            );
-
-
+            console.warn(`⚠️ ${key} no apareció en Sheets. Buscando respaldo local.`);
         } catch (error) {
-
-            console.error(
-                `⚠️ Error consultando ${key} en Google Sheets:`,
-                error.message
-            );
-
-
-            console.log(
-                '📂 Intentando campaigns.json.'
-            );
+            console.error(`⚠️ Error consultando ${key} en Google Sheets:`, error.message);
+            console.log('📂 Intentando campaigns.json.');
         }
     }
 
+    const campaigns = cargarCampaignsLocal();
+    const vehiculo = campaigns[key];
 
-    // ========================================================
-    // 2. JSON LOCAL
-    // ========================================================
-
-    const campaigns =
-        cargarCampaignsLocal();
-
-
-    const vehiculo =
-        campaigns[key];
-
-
-    if (
-        !vehiculoTieneDatos(
-            vehiculo
-        )
-    ) {
-
+    if (!vehiculoTieneDatos(vehiculo)) {
         return null;
     }
 
-
-    return {
-
-        ...vehiculo,
-
-        key
-    };
+    return { ...vehiculo, key };
 }

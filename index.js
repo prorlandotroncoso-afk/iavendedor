@@ -16,6 +16,10 @@ import {
     obtenerVehiculo
 } from './utils/dataSource.js';
 
+import {
+    guardarLead as guardarLeadEnSheets
+} from './config/googleSheets.js';
+
 
 dotenv.config();
 
@@ -71,10 +75,9 @@ const WHATSAPP_API_VERSION =
 //
 // Por ahora vive en RAM.
 //
-// Más adelante:
-// - Leads → Google Sheets
-// - Memoria persistente → Google Sheets
-// - Seguimientos → Google Sheets + scheduler
+// Leads de WhatsApp → Google Sheets (activo).
+// Memoria conversacional → RAM por ahora.
+// Seguimientos automáticos → próxima etapa.
 //
 // ============================================================
 
@@ -89,6 +92,8 @@ function getCliente(userId) {
 
             etapa: 'inicio',
 
+            nombre: null,
+
             modelo: null,
 
             metodo: null,
@@ -100,6 +105,8 @@ function getCliente(userId) {
             opcionesEsperadas: [],
 
             derivacionSolicitada: false,
+
+            horarioContacto: null,
 
             ultimaInteraccion: Date.now(),
 
@@ -154,6 +161,254 @@ function normalizar(texto = '') {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .trim();
+}
+
+
+
+function numeroDesdeMonto(valor) {
+
+    if (
+        typeof valor === 'number' &&
+        Number.isFinite(valor)
+    ) {
+        return valor;
+    }
+
+    if (
+        valor === null ||
+        valor === undefined ||
+        valor === ''
+    ) {
+        return null;
+    }
+
+    let texto =
+        String(valor)
+            .trim()
+            .replace(/ARS/gi, '')
+            .replace(/\$/g, '')
+            .replace(/\s/g, '');
+
+    if (!texto) {
+        return null;
+    }
+
+    if (texto.includes(',')) {
+
+        texto =
+            texto
+                .replace(/\./g, '')
+                .replace(',', '.');
+
+    } else {
+
+        const puntos =
+            (texto.match(/\./g) || []).length;
+
+        if (puntos >= 1) {
+            texto =
+                texto.replace(/\./g, '');
+        }
+    }
+
+    texto =
+        texto.replace(
+            /[^0-9.-]/g,
+            ''
+        );
+
+    const numero =
+        Number(texto);
+
+    return Number.isFinite(numero)
+        ? numero
+        : null;
+}
+
+
+function formatearPesos(valor) {
+
+    const numero =
+        numeroDesdeMonto(valor);
+
+    if (numero === null) {
+
+        return String(
+            valor || ''
+        ).trim();
+    }
+
+    return (
+        '$' +
+        Math.round(numero)
+            .toLocaleString('es-AR')
+    );
+}
+
+
+function formatearPorcentaje(valor) {
+
+    if (
+        valor === null ||
+        valor === undefined ||
+        valor === ''
+    ) {
+        return '';
+    }
+
+    if (
+        typeof valor === 'string' &&
+        valor.includes('%')
+    ) {
+
+        const limpio =
+            valor.trim();
+
+        return limpio;
+    }
+
+    let numero =
+        Number(
+            String(valor)
+                .replace(',', '.')
+                .trim()
+        );
+
+    if (!Number.isFinite(numero)) {
+        return String(valor).trim();
+    }
+
+    // Compatibilidad con celdas antiguas de Sheets:
+    // 0.20 -> 20%
+    if (
+        numero > 0 &&
+        numero <= 1
+    ) {
+        numero *= 100;
+    }
+
+    return (
+        Number.isInteger(numero)
+            ? String(numero)
+            : String(
+                Number(
+                    numero.toFixed(2)
+                )
+            )
+    ) + '%';
+}
+
+
+function textoCuotasEntrega(valor) {
+
+    const texto =
+        String(
+            valor || ''
+        ).trim();
+
+    if (!texto) {
+        return '';
+    }
+
+    const varias =
+        /[,y\/-]/i.test(texto);
+
+    return varias
+        ? `en las cuotas ${texto}`
+        : `en la cuota ${texto}`;
+}
+
+
+async function sincronizarLeadWhatsApp(
+    telefono,
+    nombre,
+    cliente
+) {
+
+    try {
+
+        const resumen =
+            cliente.historial
+                .slice(-6)
+                .map(
+                    item =>
+                        `${item.rol}: ${item.mensaje}`
+                )
+                .join(' | ')
+                .slice(0, 1500);
+
+        await guardarLeadEnSheets({
+
+            telefono:
+                String(
+                    telefono || ''
+                ).trim(),
+
+            nombre:
+                nombre ||
+                cliente.nombre ||
+                '',
+
+            modelo:
+                cliente.modelo ||
+                '',
+
+            metodo:
+                cliente.metodo ||
+                '',
+
+            estado:
+                cliente.etapa ||
+                'inicio',
+
+            ultimaInteraccion:
+                new Date(
+                    cliente.ultimaInteraccion ||
+                    Date.now()
+                ).toISOString(),
+
+            resumen,
+
+            derivadoA:
+                (
+                    cliente.derivacionSolicitada ||
+                    cliente.etapa === 'derivado'
+                )
+                    ? (
+                        seller.asesorDerivacion ||
+                        'Edgardo'
+                    )
+                    : '',
+
+            horarioContacto:
+                cliente.horarioContacto ||
+                '',
+
+            seguimiento20m:
+                cliente.seguimiento20mEnviado
+                    ? 'SI'
+                    : 'NO',
+
+            seguimiento24h:
+                cliente.seguimiento24hEnviado
+                    ? 'SI'
+                    : 'NO'
+        });
+
+
+        console.log(
+            `📊 Lead sincronizado: ${telefono}`
+        );
+
+
+    } catch (error) {
+
+        // Un problema de Sheets no debe bloquear la conversación.
+        console.error(
+            '⚠️ No se pudo sincronizar LEADS:',
+            error.message
+        );
+    }
 }
 
 
@@ -540,6 +795,26 @@ async function clasificarLocal(mensaje) {
         contieneAlguna(
             mensaje,
             [
+                'gasto de entrega',
+                'gastos de entrega',
+                'gasto entrega',
+                'gastos entrega',
+                'gastos de patentamiento',
+                'patentamiento'
+            ]
+        )
+    ) {
+
+        intenciones.push(
+            'gastos_entrega'
+        );
+    }
+
+
+    if (
+        contieneAlguna(
+            mensaje,
+            [
                 'entrega',
                 'retirar',
                 'retiro',
@@ -735,6 +1010,7 @@ directa
 cuotas
 requisitos
 precio
+gastos_entrega
 entrega
 equipamiento
 material
@@ -817,6 +1093,10 @@ FORMATO EXACTO:
                     {
                         role: 'system',
                         content: prompt
+                    },
+                    {
+                        role: 'user',
+                        content: mensaje
                     }
                 ],
 
@@ -887,6 +1167,7 @@ FORMATO EXACTO:
             'cuotas',
             'requisitos',
             'precio',
+            'gastos_entrega',
             'entrega',
             'equipamiento',
             'material',
@@ -976,17 +1257,22 @@ function responderFinanciacion(
     ) {
 
         partes.push(
-            `podés retirar integrando el ${vehiculo.porcentaje_entrega} en las cuotas ${vehiculo.cuotas_entrega}`
+            `podés retirar integrando el ${formatearPorcentaje(vehiculo.porcentaje_entrega)} ${textoCuotasEntrega(vehiculo.cuotas_entrega)}`
         );
     }
 
 
+    const montoEntrega =
+        vehiculo.monto_entrega ||
+        vehiculo.monto_10_porciento;
+
+
     if (
-        vehiculo.monto_10_porciento
+        montoEntrega
     ) {
 
         partes.push(
-            `ese porcentaje hoy representa ${vehiculo.monto_10_porciento}`
+            `ese porcentaje hoy representa ${formatearPesos(montoEntrega)}`
         );
     }
 
@@ -1022,7 +1308,7 @@ function responderCuotas(
     ) {
 
         respuestas.push(
-            `La cuota de suscripción es de ${vehiculo.suscripcion}`
+            `La cuota de suscripción es de ${formatearPesos(vehiculo.suscripcion)}`
         );
 
     } else if (
@@ -1030,7 +1316,7 @@ function responderCuotas(
     ) {
 
         respuestas.push(
-            `La cuota 1 es de ${vehiculo.cuota_1}`
+            `La cuota 1 es de ${formatearPesos(vehiculo.cuota_1)}`
         );
     }
 
@@ -1040,7 +1326,7 @@ function responderCuotas(
     ) {
 
         respuestas.push(
-            `La cuota pura es de ${vehiculo.cuotaPura}`
+            `La cuota pura es de ${formatearPesos(vehiculo.cuotaPura)}`
         );
     }
 
@@ -1050,7 +1336,7 @@ function responderCuotas(
     ) {
 
         respuestas.push(
-            `La cuota publicitaria es de ${vehiculo.cuotaPublicitaria}`
+            `La cuota publicitaria es de ${formatearPesos(vehiculo.cuotaPublicitaria)}`
         );
     }
 
@@ -1079,13 +1365,13 @@ function responderCuotas(
                 ) {
 
                     respuestas.push(
-                        `La cuota ${tramo.desde} es de ${tramo.valor}`
+                        `La cuota ${tramo.desde} es de ${formatearPesos(tramo.valor)}`
                     );
 
                 } else {
 
                     respuestas.push(
-                        `De la cuota ${tramo.desde} a la ${tramo.hasta}, el valor es ${tramo.valor}`
+                        `De la cuota ${tramo.desde} a la ${tramo.hasta}, el valor es ${formatearPesos(tramo.valor)}`
                     );
                 }
             }
@@ -1156,7 +1442,7 @@ function responderRequisitos(
     if (cuotaIngreso) {
 
         partes.push(
-            `la cuota de ingreso es de ${cuotaIngreso}`
+            `la cuota de ingreso es de ${formatearPesos(cuotaIngreso)}`
         );
     }
 
@@ -1196,7 +1482,28 @@ function responderPrecio(
 
     return (
         `El precio de lista del ${nombreVehiculo(vehiculo)} ` +
-        `es de ${vehiculo.precioLista}.`
+        `es de ${formatearPesos(vehiculo.precioLista)}.`
+    );
+}
+
+
+function responderGastosEntrega(
+    vehiculo
+) {
+
+    if (
+        !vehiculo.gastos_entrega
+    ) {
+
+        return (
+            'No tengo el monto de los gastos de entrega disponible en este momento. ' +
+            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
+        );
+    }
+
+
+    return (
+        `Los gastos de entrega son aproximadamente ${formatearPesos(vehiculo.gastos_entrega)}.`
     );
 }
 
@@ -1244,7 +1551,17 @@ function responderEntrega(
     ) {
 
         partes.push(
-            `Podés retirar integrando el ${vehiculo.porcentaje_entrega} en las cuotas ${vehiculo.cuotas_entrega}`
+            `Podés retirar integrando el ${formatearPorcentaje(vehiculo.porcentaje_entrega)} ${textoCuotasEntrega(vehiculo.cuotas_entrega)}`
+        );
+    }
+
+
+    if (
+        vehiculo.gastos_entrega
+    ) {
+
+        partes.push(
+            `Los gastos de entrega son aproximadamente ${formatearPesos(vehiculo.gastos_entrega)}`
         );
     }
 
@@ -1407,6 +1724,10 @@ REGLAS:
 
 10. No repitas información innecesaria.
 
+11. Si informás un monto en pesos, usá formato argentino con signo $ y separadores de miles.
+
+12. Si informás gastos de entrega, decí SIEMPRE que son "aproximadamente" ese monto.
+
 Respondé directamente.
 `;
 
@@ -1421,6 +1742,10 @@ Respondé directamente.
                     {
                         role: 'system',
                         content: prompt
+                    },
+                    {
+                        role: 'user',
+                        content: mensaje
                     }
                 ],
 
@@ -1567,10 +1892,8 @@ async function procesarRespuestaEsperada(
                 'derivado';
 
 
-            // FUTURO:
-            //
-            // guardarLead(...)
-            // Google Sheets
+            cliente.horarioContacto =
+                mensaje;
 
 
             return (
@@ -1871,6 +2194,33 @@ async function procesarMensaje(
 
     if (
         analisis.intenciones.includes(
+            'gastos_entrega'
+        )
+    ) {
+
+        cliente.esperandoRespuesta =
+            null;
+
+
+        const respuesta =
+            responderGastosEntrega(
+                vehiculo
+            );
+
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuesta
+        );
+
+
+        return respuesta;
+    }
+
+
+    if (
+        analisis.intenciones.includes(
             'entrega'
         )
     ) {
@@ -2026,7 +2376,7 @@ async function procesarMensaje(
         ) {
 
             respuesta +=
-                ` el precio de lista es de ${vehiculo.precioLista}.`;
+                ` el precio de lista es de ${formatearPesos(vehiculo.precioLista)}.`;
 
         } else {
 
@@ -2060,6 +2410,7 @@ async function procesarMensaje(
         'cuotas',
         'requisitos',
         'precio',
+        'gastos_entrega',
         'entrega',
         'equipamiento',
         'material',
@@ -2385,7 +2736,6 @@ app.post(
     '/webhook',
     (req, res) => {
 
-        console.log('📩 WEBHOOK RECIBIDO:', JSON.stringify(req.body, null, 2));
         res.sendStatus(200);
 
 
@@ -2393,10 +2743,14 @@ app.post(
             req.body;
 
 
-        const mensaje =
+        const value =
             body?.entry?.[0]
                 ?.changes?.[0]
-                ?.value
+                ?.value;
+
+
+        const mensaje =
+            value
                 ?.messages?.[0];
 
 
@@ -2428,6 +2782,29 @@ app.post(
             mensaje.text.body;
 
 
+        const nombreCliente =
+            value
+                ?.contacts?.[0]
+                ?.profile
+                ?.name ||
+            '';
+
+
+        const clienteWhatsApp =
+            getCliente(
+                numeroCliente
+            );
+
+
+        if (
+            nombreCliente
+        ) {
+
+            clienteWhatsApp.nombre =
+                nombreCliente;
+        }
+
+
         console.log(
             `📲 WhatsApp entrante de ${numeroCliente}: ${textoCliente}`
         );
@@ -2452,6 +2829,15 @@ app.post(
 
                 console.log(
                     `✅ WhatsApp respondido a ${numeroCliente}`
+                );
+
+
+                await sincronizarLeadWhatsApp(
+                    numeroCliente,
+                    nombreCliente,
+                    getCliente(
+                        numeroCliente
+                    )
                 );
 
 
