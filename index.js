@@ -886,7 +886,16 @@ async function clasificarLocal(mensaje) {
                 'gasto entrega',
                 'gastos entrega',
                 'gastos de patentamiento',
-                'patentamiento'
+                'patentamiento',
+                'patentar',
+                'que gastos tiene',
+                'qué gastos tiene',
+                'tiene gastos',
+                'cuanto son los gastos',
+                'cuánto son los gastos',
+                'gastos para retirar',
+                'gastos para retirarlo',
+                'gastos al retirar'
             ]
         )
     ) {
@@ -1496,7 +1505,7 @@ function responderCuotas(
 
     return (
         respuestas.join('. ') +
-        '.'
+        '. Si te parece, te paso también los requisitos para ingresar, es súper sencillo.'
     );
 }
 
@@ -2115,7 +2124,7 @@ async function procesarRespuestaEsperada(
                 'consultando_cuotas';
 
             cliente.esperandoRespuesta =
-                'aceptar_derivacion';
+                'ofrecer_requisitos';
 
             cliente.opcionesEsperadas = [];
 
@@ -2132,6 +2141,70 @@ async function procesarRespuestaEsperada(
                 'Dale. ¿Querés que te pase primero los requisitos o el detalle de las cuotas?'
             );
         }
+    }
+
+
+    // --------------------------------------------------------
+    // OFRECER REQUISITOS DESPUÉS DEL DETALLE DE CUOTAS
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'ofrecer_requisitos'
+    ) {
+
+        if (
+            analisis.confirmacion ||
+            analisis.intenciones.includes('requisitos')
+        ) {
+
+            cliente.etapa =
+                'consultando_requisitos';
+
+            cliente.esperandoRespuesta =
+                'aceptar_derivacion';
+
+            cliente.opcionesEsperadas = [];
+
+            return responderRequisitos(
+                vehiculo
+            );
+        }
+
+        if (
+            analisis.negacion
+        ) {
+
+            cliente.esperandoRespuesta =
+                null;
+
+            cliente.opcionesEsperadas = [];
+
+            return (
+                'Perfecto, no hay problema. ' +
+                'Si querés consultar otra cosa del vehículo, decime.'
+            );
+        }
+
+        // Si el cliente pregunta otra cosa concreta, dejamos que el
+        // enrutador general procese esa intención en lugar de forzarlo
+        // a responder sí/no sobre los requisitos.
+        if (
+            analisis.intenciones.length > 0
+        ) {
+
+            cliente.esperandoRespuesta =
+                null;
+
+            cliente.opcionesEsperadas = [];
+
+            return null;
+        }
+
+        return (
+            'Si te parece, te paso también los requisitos para ingresar. ' +
+            '¿Querés que te los pase?'
+        );
     }
 
 
@@ -2429,7 +2502,7 @@ async function procesarMensaje(
 
 
         cliente.esperandoRespuesta =
-            'aceptar_derivacion';
+            'ofrecer_requisitos';
 
 
         const respuesta =
