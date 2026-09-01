@@ -98,6 +98,10 @@ function getCliente(userId) {
 
             metodo: null,
 
+            usoVehiculo: null,
+
+            decisionCompra: null,
+
             historial: [],
 
             esperandoRespuesta: null,
@@ -316,6 +320,88 @@ function textoCuotasEntrega(valor) {
     return varias
         ? `en las cuotas ${texto}`
         : `en la cuota ${texto}`;
+}
+
+
+function respuestaUsoVehiculo(mensaje) {
+
+    const t = normalizar(mensaje);
+
+    if (
+        contieneAlguna(t, [
+            'trabajo',
+            'laburo',
+            'trabajar',
+            'reparto',
+            'repartir',
+            'uber',
+            'cabify',
+            'taxi',
+            'comercial'
+        ])
+    ) {
+        return 'trabajo';
+    }
+
+    if (
+        contieneAlguna(t, [
+            'uso general',
+            'personal',
+            'familia',
+            'familiar',
+            'pasear',
+            'viajar',
+            'particular'
+        ])
+    ) {
+        return 'uso general';
+    }
+
+    return String(mensaje || '').trim();
+}
+
+
+function decisionEsCompartida(mensaje) {
+
+    const t = normalizar(mensaje);
+
+    return contieneAlguna(t, [
+        'con mi esposa',
+        'con mi esposo',
+        'con mi pareja',
+        'con mi novia',
+        'con mi novio',
+        'con mi marido',
+        'con mi mujer',
+        'con mi socio',
+        'con mi socia',
+        'con alguien',
+        'entre los dos',
+        'entre ambos',
+        'los dos',
+        'mi pareja',
+        'mi esposa',
+        'mi esposo',
+        'mi socio',
+        'mi socia'
+    ]);
+}
+
+
+function decisionEsIndividual(mensaje) {
+
+    const t = normalizar(mensaje);
+
+    return contieneAlguna(t, [
+        'solo',
+        'sola',
+        'yo solo',
+        'yo sola',
+        'decido yo',
+        'por mi cuenta',
+        'yo mismo',
+        'yo misma'
+    ]);
 }
 
 
@@ -1491,19 +1577,50 @@ function responderGastosEntrega(
     vehiculo
 ) {
 
+    const porcentaje =
+        vehiculo.gastos_entrega;
+
+    const monto =
+        vehiculo.monto_gastos_entrega ||
+        vehiculo.gastos_entrega_monto ||
+        null;
+
+
     if (
-        !vehiculo.gastos_entrega
+        !porcentaje &&
+        !monto
     ) {
 
         return (
-            'No tengo el monto de los gastos de entrega disponible en este momento. ' +
-            `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
+            'No tengo los gastos de entrega actualizados en este momento. ' +
+            `Si querés, te los puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
+        );
+    }
+
+
+    if (
+        porcentaje &&
+        monto
+    ) {
+
+        return (
+            `Los gastos de entrega son del ${formatearPorcentaje(porcentaje)}. ` +
+            `Eso representa aproximadamente ${formatearPesos(monto)}.`
+        );
+    }
+
+
+    if (porcentaje) {
+
+        return (
+            `Los gastos de entrega son del ${formatearPorcentaje(porcentaje)}. ` +
+            `No tengo cargado el monto aproximado actualizado en este momento.`
         );
     }
 
 
     return (
-        `Los gastos de entrega son aproximadamente ${formatearPesos(vehiculo.gastos_entrega)}.`
+        `Los gastos de entrega representan aproximadamente ${formatearPesos(monto)}.`
     );
 }
 
@@ -1557,12 +1674,39 @@ function responderEntrega(
 
 
     if (
-        vehiculo.gastos_entrega
+        vehiculo.gastos_entrega ||
+        vehiculo.monto_gastos_entrega
     ) {
 
-        partes.push(
-            `Los gastos de entrega son aproximadamente ${formatearPesos(vehiculo.gastos_entrega)}`
-        );
+        const porcentajeGastos =
+            vehiculo.gastos_entrega;
+
+        const montoGastos =
+            vehiculo.monto_gastos_entrega ||
+            vehiculo.gastos_entrega_monto ||
+            null;
+
+        if (
+            porcentajeGastos &&
+            montoGastos
+        ) {
+
+            partes.push(
+                `Los gastos de entrega son del ${formatearPorcentaje(porcentajeGastos)} y representan aproximadamente ${formatearPesos(montoGastos)}`
+            );
+
+        } else if (porcentajeGastos) {
+
+            partes.push(
+                `Los gastos de entrega son del ${formatearPorcentaje(porcentajeGastos)}`
+            );
+
+        } else if (montoGastos) {
+
+            partes.push(
+                `Los gastos de entrega representan aproximadamente ${formatearPesos(montoGastos)}`
+            );
+        }
     }
 
 
@@ -1799,6 +1943,120 @@ async function procesarRespuestaEsperada(
     analisis,
     vehiculo
 ) {
+
+    // --------------------------------------------------------
+    // CALIFICACIÓN SUAVE: USO DEL VEHÍCULO
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'uso_vehiculo'
+    ) {
+
+        cliente.usoVehiculo =
+            respuestaUsoVehiculo(mensaje);
+
+        cliente.esperandoRespuesta =
+            'decision_compra';
+
+        return (
+            'Perfecto. Y te consulto una cosa más: ' +
+            '¿la decisión la tomás vos solo o con alguien más?'
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // CALIFICACIÓN SUAVE: QUIÉN TOMA LA DECISIÓN
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'decision_compra'
+    ) {
+
+        cliente.decisionCompra =
+            String(mensaje || '').trim();
+
+        if (
+            decisionEsCompartida(mensaje)
+        ) {
+
+            cliente.esperandoRespuesta =
+                'aceptar_llamada_conjunta';
+
+            return (
+                'Perfecto. Te pregunto porque, si te parece, podemos organizar una llamada ' +
+                'en un horario en el que estén los dos y así les pasan toda la información juntos. ' +
+                '¿Querés que la coordinemos?'
+            );
+        }
+
+        cliente.esperandoRespuesta =
+            'elegir_info_financiacion';
+
+        cliente.opcionesEsperadas = [
+            'requisitos',
+            'cuotas'
+        ];
+
+        return (
+            'Perfecto, gracias. ' +
+            responderFinanciacion(vehiculo)
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // PROPUESTA DE LLAMADA CONJUNTA
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'aceptar_llamada_conjunta'
+    ) {
+
+        if (
+            analisis.confirmacion ||
+            analisis.intenciones.includes('avanzar')
+        ) {
+
+            cliente.esperandoRespuesta =
+                'horario_contacto';
+
+            cliente.derivacionSolicitada =
+                true;
+
+            cliente.opcionesEsperadas = [];
+
+            return (
+                `Perfecto. ¿Qué día y horario les queda cómodo para que los contacte ${seller.asesorDerivacion || 'Edgardo'}?`
+            );
+        }
+
+        if (
+            analisis.negacion
+        ) {
+
+            cliente.esperandoRespuesta =
+                'elegir_info_financiacion';
+
+            cliente.opcionesEsperadas = [
+                'requisitos',
+                'cuotas'
+            ];
+
+            return (
+                'No hay problema. ' +
+                responderFinanciacion(vehiculo)
+            );
+        }
+
+        return (
+            'Si te parece, la podemos coordinar para cuando estén los dos. ' +
+            '¿Querés que te pida un día y horario?'
+        );
+    }
 
     // --------------------------------------------------------
     // REQUISITOS O CUOTAS
@@ -2319,19 +2577,15 @@ async function procesarMensaje(
 
 
         cliente.esperandoRespuesta =
-            'elegir_info_financiacion';
+            'uso_vehiculo';
 
 
-        cliente.opcionesEsperadas = [
-            'requisitos',
-            'cuotas'
-        ];
+        cliente.opcionesEsperadas = [];
 
 
         const respuesta =
-            responderFinanciacion(
-                vehiculo
-            );
+            'Perfecto. Antes de pasarte el detalle, te hago un par de preguntas cortitas para orientarme un poco. ' +
+            '¿El vehículo lo necesitás para trabajo o para uso general?';
 
 
         guardarHistorial(
