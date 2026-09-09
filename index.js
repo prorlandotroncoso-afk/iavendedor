@@ -3377,6 +3377,159 @@ app.post(
 
 
 // ============================================================
+// MANYCHAT - SOLICITUD EXTERNA
+// ============================================================
+//
+// ManyChat envía aquí el último mensaje escrito por el cliente.
+// La respuesta vuelve como JSON para mapearla a un campo de ManyChat.
+//
+// Body recomendado desde ManyChat:
+// {
+//   "message": "<Last Text Input>",
+//   "userId": "<ID estable del contacto o teléfono>",
+//   "name": "<nombre del contacto>"
+// }
+//
+// Respuesta:
+// {
+//   "ok": true,
+//   "reply": "...",
+//   "respuesta": "..."
+// }
+// ============================================================
+
+app.post(
+    '/manychat',
+    async (req, res) => {
+
+        const body =
+            req.body || {};
+
+
+        const message =
+            body.message ??
+            body.mensaje ??
+            body.text ??
+            body.lastTextInput ??
+            '';
+
+
+        const userId =
+            body.userId ??
+            body.user_id ??
+            body.contactId ??
+            body.contact_id ??
+            body.phone ??
+            body.telefono ??
+            '';
+
+
+        const name =
+            body.name ??
+            body.nombre ??
+            body.firstName ??
+            body.first_name ??
+            '';
+
+
+        const mensaje =
+            String(message || '').trim();
+
+
+        const identificador =
+            String(userId || '').trim();
+
+
+        if (!mensaje) {
+
+            return res
+                .status(400)
+                .json({
+                    ok: false,
+                    error: 'Falta el mensaje del cliente'
+                });
+        }
+
+
+        if (!identificador) {
+
+            return res
+                .status(400)
+                .json({
+                    ok: false,
+                    error: 'Falta un identificador estable del contacto'
+                });
+        }
+
+
+        try {
+
+            const clienteManyChat =
+                getCliente(
+                    identificador
+                );
+
+
+            if (name) {
+
+                clienteManyChat.nombre =
+                    String(name).trim();
+            }
+
+
+            console.log(
+                `📥 ManyChat entrante de ${identificador}: ${mensaje}`
+            );
+
+
+            const reply =
+                await procesarMensaje(
+                    mensaje,
+                    identificador
+                );
+
+
+            await sincronizarLeadWhatsApp(
+                identificador,
+                name,
+                getCliente(
+                    identificador
+                )
+            );
+
+
+            console.log(
+                `✅ ManyChat respondido a ${identificador}`
+            );
+
+
+            return res.json({
+                ok: true,
+                reply,
+                respuesta: reply
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                '❌ Error procesando ManyChat:',
+                error
+            );
+
+
+            return res
+                .status(500)
+                .json({
+                    ok: false,
+                    error: 'Error procesando mensaje'
+                });
+        }
+    }
+);
+
+
+// ============================================================
 // 13. ENDPOINT CHAT
 // ============================================================
 
