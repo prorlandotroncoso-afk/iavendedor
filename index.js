@@ -84,6 +84,45 @@ const WHATSAPP_API_VERSION =
 const clientes = {};
 
 
+const modosAtencion = new Map();
+
+function normalizarTelefono(valor = '') {
+    return String(valor || '')
+        .replace(/\D/g, '')
+        .trim();
+}
+
+function getModoAtencion(telefono) {
+    const clave = normalizarTelefono(telefono);
+    return modosAtencion.get(clave) || 'IA';
+}
+
+function setModoAtencion(telefono, modo) {
+    const clave = normalizarTelefono(telefono);
+
+    if (!clave) {
+        return;
+    }
+
+    const nuevoModo =
+        String(modo || '').toUpperCase() === 'HUMANO'
+            ? 'HUMANO'
+            : 'IA';
+
+    modosAtencion.set(clave, nuevoModo);
+
+    console.log(
+        `🧭 Modo ${nuevoModo} para ${clave}`
+    );
+}
+
+function esperar(ms) {
+    return new Promise(
+        resolve => setTimeout(resolve, ms)
+    );
+}
+
+
 function getCliente(userId) {
 
     if (!clientes[userId]) {
@@ -3260,38 +3299,75 @@ app.post(
 
         res.sendStatus(200);
 
-
         const body =
             req.body;
-        const field =
+
+        const change =
             body?.entry?.[0]
-                ?.changes?.[0]
-                ?.field;
-        
+                ?.changes?.[0];
+
+        const field =
+            change?.field;
+
+        const value =
+            change?.value;
+
         console.log(
             '📡 WEBHOOK META RECIBIDO:',
             field || 'sin campo'
         );
-        console.log(
-            JSON.stringify(body, null, 2)
-        );
 
-        const value =
-            body?.entry?.[0]
-                ?.changes?.[0]
-                ?.value;
+        // --------------------------------------------------------
+        // TOMA HUMANA DESDE WHATSAPP BUSINESS APP
+        // --------------------------------------------------------
+        //
+        // Meta envía smb_message_echoes cuando el negocio escribe
+        // desde WhatsApp Business App o un dispositivo vinculado.
+        // "to" es el teléfono real del cliente.
+        //
+        // Al detectar ese evento dormimos a Martín SOLO para ese
+        // cliente. No se responde al echo.
+        // --------------------------------------------------------
 
+        if (
+            field === 'smb_message_echoes' &&
+            Array.isArray(value?.message_echoes)
+        ) {
+
+            for (
+                const echo
+                of value.message_echoes
+            ) {
+
+                const telefonoCliente =
+                    normalizarTelefono(
+                        echo?.to
+                    );
+
+                if (!telefonoCliente) {
+                    continue;
+                }
+
+                setModoAtencion(
+                    telefonoCliente,
+                    'HUMANO'
+                );
+
+                console.log(
+                    `👤 Toma humana detectada desde WhatsApp Business para ${telefonoCliente}`
+                );
+            }
+
+            return;
+        }
 
         const mensaje =
             value
                 ?.messages?.[0];
 
-
         if (!mensaje) {
-
             return;
         }
-
 
         if (
             mensaje.type !== 'text' ||
@@ -3302,18 +3378,16 @@ app.post(
                 `ℹ️ WhatsApp recibió mensaje tipo "${mensaje.type}" - ignorado por ahora`
             );
 
-
             return;
         }
 
-
         const numeroCliente =
-            mensaje.from;
-
+            normalizarTelefono(
+                mensaje.from
+            );
 
         const textoCliente =
             mensaje.text.body;
-
 
         const nombreCliente =
             value
@@ -3322,12 +3396,22 @@ app.post(
                 ?.name ||
             '';
 
+        if (
+            getModoAtencion(numeroCliente) ===
+            'HUMANO'
+        ) {
+
+            console.log(
+                `🛑 WhatsApp ignorado por Martín: ${numeroCliente} está en modo HUMANO`
+            );
+
+            return;
+        }
 
         const clienteWhatsApp =
             getCliente(
                 numeroCliente
             );
-
 
         if (
             nombreCliente
@@ -3337,11 +3421,9 @@ app.post(
                 nombreCliente;
         }
 
-
         console.log(
             `📲 WhatsApp entrante de ${numeroCliente}: ${textoCliente}`
         );
-
 
         (async () => {
 
@@ -3353,17 +3435,14 @@ app.post(
                         numeroCliente
                     );
 
-
                 await enviarMensajeWhatsApp(
                     numeroCliente,
                     respuestaMartin
                 );
 
-
                 console.log(
                     `✅ WhatsApp respondido a ${numeroCliente}`
                 );
-
 
                 await sincronizarLeadWhatsApp(
                     numeroCliente,
@@ -3372,7 +3451,6 @@ app.post(
                         numeroCliente
                     )
                 );
-
 
             } catch (error) {
 
@@ -3391,21 +3469,23 @@ app.post(
 // MANYCHAT - SOLICITUD EXTERNA
 // ============================================================
 //
-// ManyChat envía aquí el último mensaje escrito por el cliente.
-// La respuesta vuelve como JSON para mapearla a un campo de ManyChat.
-//
-// Body recomendado desde ManyChat:
+// ManyChat envía:
 // {
-//   "message": "<Last Text Input>",
-//   "userId": "<ID estable del contacto o teléfono>",
-//   "name": "<nombre del contacto>"
+//   "mensaje": "<Last Text Input>",
+//   "userId": "<ManyChat Contact ID>",
+//   "telefono": "<WhatsApp ID / wa_id>"
 // }
 //
-// Respuesta:
+// El teléfono real es la clave canónica para poder relacionar
+// ManyChat con smb_message_echoes de Meta.
+//
+// Si el contacto está en modo HUMANO:
 // {
 //   "ok": true,
-//   "reply": "...",
-//   "respuesta": "..."
+//   "modo": "HUMANO",
+//   "responder": false,
+//   "reply": "",
+//   "respuesta": ""
 // }
 // ============================================================
 
@@ -3416,7 +3496,6 @@ app.post(
         const body =
             req.body || {};
 
-
         const message =
             body.message ??
             body.mensaje ??
@@ -3424,16 +3503,20 @@ app.post(
             body.lastTextInput ??
             '';
 
-
         const userId =
             body.userId ??
             body.user_id ??
             body.contactId ??
             body.contact_id ??
-            body.phone ??
-            body.telefono ??
             '';
 
+        const telefonoRecibido =
+            body.telefono ??
+            body.phone ??
+            body.wa_id ??
+            body.whatsappId ??
+            body.whatsapp_id ??
+            '';
 
         const name =
             body.name ??
@@ -3442,14 +3525,20 @@ app.post(
             body.first_name ??
             '';
 
-
         const mensaje =
             String(message || '').trim();
 
+        const telefono =
+            normalizarTelefono(
+                telefonoRecibido
+            );
 
-        const identificador =
+        const identificadorManyChat =
             String(userId || '').trim();
 
+        const identificador =
+            telefono ||
+            identificadorManyChat;
 
         if (!mensaje) {
 
@@ -3461,7 +3550,6 @@ app.post(
                 });
         }
 
-
         if (!identificador) {
 
             return res
@@ -3472,14 +3560,42 @@ app.post(
                 });
         }
 
-
         try {
+
+            console.log(
+                `📥 ManyChat entrante de ${identificador} (MC ${identificadorManyChat || 'sin ID'}): ${mensaje}`
+            );
+
+            // Damos una ventana breve para que, si el mensaje fue enviado
+            // manualmente desde WhatsApp Business App, llegue primero el
+            // smb_message_echoes y cambie el contacto a HUMANO.
+            if (telefono) {
+                await esperar(1500);
+            }
+
+            if (
+                telefono &&
+                getModoAtencion(telefono) ===
+                'HUMANO'
+            ) {
+
+                console.log(
+                    `🛑 ManyChat suprimido: ${telefono} está en modo HUMANO`
+                );
+
+                return res.json({
+                    ok: true,
+                    modo: 'HUMANO',
+                    responder: false,
+                    reply: '',
+                    respuesta: ''
+                });
+            }
 
             const clienteManyChat =
                 getCliente(
                     identificador
                 );
-
 
             if (name) {
 
@@ -3487,39 +3603,31 @@ app.post(
                     String(name).trim();
             }
 
-
-            console.log(
-                `📥 ManyChat entrante de ${identificador}: ${mensaje}`
-            );
-
-
             const reply =
                 await procesarMensaje(
                     mensaje,
                     identificador
                 );
 
-
             await sincronizarLeadWhatsApp(
-                identificador,
+                telefono || identificador,
                 name,
                 getCliente(
                     identificador
                 )
             );
 
-
             console.log(
                 `✅ ManyChat respondido a ${identificador}`
             );
 
-
             return res.json({
                 ok: true,
+                modo: 'IA',
+                responder: true,
                 reply,
                 respuesta: reply
             });
-
 
         } catch (error) {
 
@@ -3528,7 +3636,6 @@ app.post(
                 error
             );
 
-
             return res
                 .status(500)
                 .json({
@@ -3536,6 +3643,81 @@ app.post(
                     error: 'Error procesando mensaje'
                 });
         }
+    }
+);
+
+
+// ============================================================
+// CONTROL INTERNO IA / HUMANO
+// ============================================================
+//
+// Endpoint preparado para una futura acción interna de ManyChat
+// o panel de control. No se usa desde el chat del cliente.
+//
+// Requiere MARTIN_CONTROL_TOKEN en Render.
+// POST /control/modo
+// Header: x-martin-control-token
+// Body: { "telefono": "549...", "modo": "IA" | "HUMANO" }
+// ============================================================
+
+app.post(
+    '/control/modo',
+    (req, res) => {
+
+        const tokenEsperado =
+            process.env.MARTIN_CONTROL_TOKEN;
+
+        const tokenRecibido =
+            req.headers[
+                'x-martin-control-token'
+            ];
+
+        if (
+            !tokenEsperado ||
+            tokenRecibido !== tokenEsperado
+        ) {
+
+            return res
+                .status(403)
+                .json({
+                    ok: false,
+                    error: 'No autorizado'
+                });
+        }
+
+        const telefono =
+            normalizarTelefono(
+                req.body?.telefono
+            );
+
+        const modo =
+            String(
+                req.body?.modo || ''
+            ).toUpperCase();
+
+        if (
+            !telefono ||
+            !['IA', 'HUMANO'].includes(modo)
+        ) {
+
+            return res
+                .status(400)
+                .json({
+                    ok: false,
+                    error: 'telefono y modo (IA/HUMANO) son obligatorios'
+                });
+        }
+
+        setModoAtencion(
+            telefono,
+            modo
+        );
+
+        return res.json({
+            ok: true,
+            telefono,
+            modo
+        });
     }
 );
 
