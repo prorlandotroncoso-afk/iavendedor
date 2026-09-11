@@ -3263,7 +3263,18 @@ app.post(
 
         const body =
             req.body;
-
+        const field =
+            body?.entry?.[0]
+                ?.changes?.[0]
+                ?.field;
+        
+        console.log(
+            '📡 WEBHOOK META RECIBIDO:',
+            field || 'sin campo'
+        );
+        console.log(
+            JSON.stringify(body, null, 2)
+        );
 
         const value =
             body?.entry?.[0]
