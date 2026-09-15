@@ -86,40 +86,144 @@ const clientes = {};
 
 const modosAtencion = new Map();
 
+const MINUTOS_REACTIVACION = 30;
+const FRASE_CIERRE_HUMANO =
+    'perfecto cualquier otra consulta podes escribirnos por aca';
+
 function normalizarTelefono(valor = '') {
     return String(valor || '')
         .replace(/\D/g, '')
         .trim();
 }
 
-function getModoAtencion(telefono) {
-    const clave = normalizarTelefono(telefono);
-    return modosAtencion.get(clave) || 'IA';
+function normalizarComandoHumano(texto = '') {
+    return normalizar(texto)
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
-function setModoAtencion(telefono, modo) {
+function getEstadoAtencion(telefono) {
     const clave = normalizarTelefono(telefono);
 
     if (!clave) {
+        return {
+            modo: 'IA',
+            reactivarDespuesDe: null,
+            historialHumano: []
+        };
+    }
+
+    if (!modosAtencion.has(clave)) {
+        modosAtencion.set(clave, {
+            modo: 'IA',
+            reactivarDespuesDe: null,
+            historialHumano: []
+        });
+    }
+
+    return modosAtencion.get(clave);
+}
+
+function getModoAtencion(telefono) {
+    const estado = getEstadoAtencion(telefono);
+
+    if (
+        estado.modo === 'ESPERA' &&
+        estado.reactivarDespuesDe &&
+        Date.now() >= estado.reactivarDespuesDe
+    ) {
+        estado.modo = 'IA';
+        estado.reactivarDespuesDe = null;
+
+        console.log(
+            `🤖 Martín reactivado automáticamente para ${normalizarTelefono(telefono)}`
+        );
+    }
+
+    return estado.modo;
+}
+
+function setModoAtencion(telefono, modo, opciones = {}) {
+    const clave = normalizarTelefono(telefono);
+    if (!clave) return;
+
+    const estado = getEstadoAtencion(clave);
+    const solicitado = String(modo || '').toUpperCase();
+    const nuevoModo =
+        ['IA', 'HUMANO', 'ESPERA'].includes(solicitado)
+            ? solicitado
+            : 'IA';
+
+    estado.modo = nuevoModo;
+
+    if (nuevoModo === 'ESPERA') {
+        estado.reactivarDespuesDe =
+            opciones.reactivarDespuesDe ||
+            Date.now() + MINUTOS_REACTIVACION * 60 * 1000;
+    } else {
+        estado.reactivarDespuesDe = null;
+    }
+
+    console.log(`🧭 Modo ${nuevoModo} para ${clave}`);
+}
+
+function registrarHistorialHumano(telefono, rol, mensaje) {
+    const estado = getEstadoAtencion(telefono);
+    const texto = String(mensaje || '').trim();
+    if (!texto) return;
+
+    estado.historialHumano.push({
+        rol,
+        mensaje: texto,
+        fecha: Date.now()
+    });
+
+    if (estado.historialHumano.length > 20) {
+        estado.historialHumano = estado.historialHumano.slice(-20);
+    }
+}
+
+function volcarHistorialHumanoEnCliente(telefono, cliente) {
+    const estado = getEstadoAtencion(telefono);
+
+    if (!Array.isArray(estado.historialHumano) ||
+        estado.historialHumano.length === 0) {
         return;
     }
 
-    const nuevoModo =
-        String(modo || '').toUpperCase() === 'HUMANO'
-            ? 'HUMANO'
-            : 'IA';
+    for (const item of estado.historialHumano) {
+        guardarHistorial(
+            cliente,
+            item.rol === 'humano' ? 'asesor' : 'cliente',
+            item.mensaje
+        );
+    }
 
-    modosAtencion.set(clave, nuevoModo);
+    estado.historialHumano = [];
+    console.log(
+        `🧠 Contexto humano incorporado para ${normalizarTelefono(telefono)}`
+    );
+}
+
+function esFraseCierreHumano(texto) {
+    return normalizarComandoHumano(texto) === FRASE_CIERRE_HUMANO;
+}
+
+function reiniciarEsperaSiCorresponde(telefono) {
+    const estado = getEstadoAtencion(telefono);
+    if (estado.modo !== 'ESPERA') return;
+
+    estado.reactivarDespuesDe =
+        Date.now() + MINUTOS_REACTIVACION * 60 * 1000;
 
     console.log(
-        `🧭 Modo ${nuevoModo} para ${clave}`
+        `⏳ Espera reiniciada ${MINUTOS_REACTIVACION} min para ${normalizarTelefono(telefono)}`
     );
 }
 
 function esperar(ms) {
-    return new Promise(
-        resolve => setTimeout(resolve, ms)
-    );
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
@@ -3357,14 +3461,34 @@ app.post(
                     continue;
                 }
 
-                setModoAtencion(
+                const textoHumano =
+                    echo?.text?.body || '';
+
+                registrarHistorialHumano(
                     telefonoCliente,
-                    'HUMANO'
+                    'humano',
+                    textoHumano
                 );
 
-                console.log(
-                    `👤 Toma humana detectada desde WhatsApp Business para ${telefonoCliente}`
-                );
+                if (esFraseCierreHumano(textoHumano)) {
+                    setModoAtencion(
+                        telefonoCliente,
+                        'ESPERA'
+                    );
+
+                    console.log(
+                        `⏳ Cierre humano detectado para ${telefonoCliente}. Martín esperará ${MINUTOS_REACTIVACION} minutos de silencio.`
+                    );
+                } else {
+                    setModoAtencion(
+                        telefonoCliente,
+                        'HUMANO'
+                    );
+
+                    console.log(
+                        `👤 Toma humana detectada desde WhatsApp Business para ${telefonoCliente}`
+                    );
+                }
             }
 
             return;
@@ -3499,19 +3623,36 @@ app.post(
                 await esperar(1500);
             }
 
+            const modoActual =
+                telefono
+                    ? getModoAtencion(telefono)
+                    : 'IA';
+
             if (
                 telefono &&
-                getModoAtencion(telefono) ===
-                'HUMANO'
+                (
+                    modoActual === 'HUMANO' ||
+                    modoActual === 'ESPERA'
+                )
             ) {
 
+                registrarHistorialHumano(
+                    telefono,
+                    'cliente',
+                    mensaje
+                );
+
+                if (modoActual === 'ESPERA') {
+                    reiniciarEsperaSiCorresponde(telefono);
+                }
+
                 console.log(
-                    `🛑 ManyChat suprimido: ${telefono} está en modo HUMANO`
+                    `🛑 ManyChat suprimido: ${telefono} está en modo ${modoActual}`
                 );
 
                 return res.json({
                     ok: true,
-                    modo: 'HUMANO',
+                    modo: modoActual,
                     responder: false,
                     reply: '',
                     respuesta: ''
@@ -3522,6 +3663,13 @@ app.post(
                 getCliente(
                     identificador
                 );
+
+            if (telefono) {
+                volcarHistorialHumanoEnCliente(
+                    telefono,
+                    clienteManyChat
+                );
+            }
 
             if (name) {
 
@@ -3623,14 +3771,14 @@ app.post(
 
         if (
             !telefono ||
-            !['IA', 'HUMANO'].includes(modo)
+            !['IA', 'HUMANO', 'ESPERA'].includes(modo)
         ) {
 
             return res
                 .status(400)
                 .json({
                     ok: false,
-                    error: 'telefono y modo (IA/HUMANO) son obligatorios'
+                    error: 'telefono y modo (IA/HUMANO/ESPERA) son obligatorios'
                 });
         }
 
