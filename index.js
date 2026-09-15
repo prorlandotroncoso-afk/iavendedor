@@ -3290,7 +3290,19 @@ app.get(
 
 
 // ============================================================
-// WHATSAPP CLOUD API - RECIBIR MENSAJES
+// WHATSAPP CLOUD API - WEBHOOK META
+// ============================================================
+//
+// Arquitectura actual:
+// - Los mensajes del CLIENTE entran por ManyChat -> /manychat.
+// - Este webhook de Meta se usa para detectar mensajes enviados
+//   manualmente desde WhatsApp Business App mediante
+//   smb_message_echoes.
+//
+// IMPORTANTE:
+// No responder directamente a value.messages desde este webhook,
+// porque ManyChat ya procesa esos mensajes. Hacerlo duplicaría la
+// conversación y además usaría la antigua ruta directa de Cloud API.
 // ============================================================
 
 app.post(
@@ -3324,9 +3336,6 @@ app.post(
         // Meta envía smb_message_echoes cuando el negocio escribe
         // desde WhatsApp Business App o un dispositivo vinculado.
         // "to" es el teléfono real del cliente.
-        //
-        // Al detectar ese evento dormimos a Martín SOLO para ese
-        // cliente. No se responde al echo.
         // --------------------------------------------------------
 
         if (
@@ -3361,106 +3370,23 @@ app.post(
             return;
         }
 
-        const mensaje =
-            value
-                ?.messages?.[0];
+        // --------------------------------------------------------
+        // MENSAJES DEL CLIENTE
+        // --------------------------------------------------------
+        //
+        // ManyChat es el único canal que debe enviarlos a Martín.
+        // Meta también puede notificarlos aquí porque la app está
+        // suscripta a "messages", pero se ignoran deliberadamente.
+        // --------------------------------------------------------
 
-        if (!mensaje) {
-            return;
-        }
-
-        if (
-            mensaje.type !== 'text' ||
-            !mensaje.text?.body
-        ) {
+        if (field === 'messages') {
 
             console.log(
-                `ℹ️ WhatsApp recibió mensaje tipo "${mensaje.type}" - ignorado por ahora`
+                'ℹ️ Evento messages de Meta ignorado: lo procesa ManyChat'
             );
 
             return;
         }
-
-        const numeroCliente =
-            normalizarTelefono(
-                mensaje.from
-            );
-
-        const textoCliente =
-            mensaje.text.body;
-
-        const nombreCliente =
-            value
-                ?.contacts?.[0]
-                ?.profile
-                ?.name ||
-            '';
-
-        if (
-            getModoAtencion(numeroCliente) ===
-            'HUMANO'
-        ) {
-
-            console.log(
-                `🛑 WhatsApp ignorado por Martín: ${numeroCliente} está en modo HUMANO`
-            );
-
-            return;
-        }
-
-        const clienteWhatsApp =
-            getCliente(
-                numeroCliente
-            );
-
-        if (
-            nombreCliente
-        ) {
-
-            clienteWhatsApp.nombre =
-                nombreCliente;
-        }
-
-        console.log(
-            `📲 WhatsApp entrante de ${numeroCliente}: ${textoCliente}`
-        );
-
-        (async () => {
-
-            try {
-
-                const respuestaMartin =
-                    await procesarMensaje(
-                        textoCliente,
-                        numeroCliente
-                    );
-
-                await enviarMensajeWhatsApp(
-                    numeroCliente,
-                    respuestaMartin
-                );
-
-                console.log(
-                    `✅ WhatsApp respondido a ${numeroCliente}`
-                );
-
-                await sincronizarLeadWhatsApp(
-                    numeroCliente,
-                    nombreCliente,
-                    getCliente(
-                        numeroCliente
-                    )
-                );
-
-            } catch (error) {
-
-                console.error(
-                    '❌ Error procesando WhatsApp:',
-                    error
-                );
-            }
-
-        })();
     }
 );
 
