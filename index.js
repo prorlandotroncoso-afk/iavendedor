@@ -67,6 +67,10 @@ const WHATSAPP_VERIFY_TOKEN =
 const WHATSAPP_API_VERSION =
     process.env.WHATSAPP_API_VERSION || 'v25.0';
 
+const MARTIN_SHEETS_WEBAPP_URL =
+    process.env.MARTIN_SHEETS_WEBAPP_URL ||
+    'https://script.google.com/macros/s/AKfycbw6jYaY3JU5I79i5BoUX9jP_hcOljlwuASSZhZ-RE7wkTVb-yExuVA9Nfv1UhgB9w3o/exec';
+
 
 
 // ============================================================
@@ -224,6 +228,132 @@ function reiniciarEsperaSiCorresponde(telefono) {
 
 function esperar(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+const memoriasCargadas = new Set();
+
+async function leerMemoriaSheets(telefono) {
+    const clave = normalizarTelefono(telefono);
+    if (!clave) return null;
+    try {
+        const url = `${MARTIN_SHEETS_WEBAPP_URL}?action=memoria&telefono=${encodeURIComponent(clave)}`;
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!r.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${r.status}`);
+        return data?.memoria || null;
+    } catch (e) {
+        console.error('⚠️ No se pudo leer MEMORIA:', e.message);
+        return null;
+    }
+}
+
+async function escribirMemoriaSheets(memoria) {
+    const clave = normalizarTelefono(memoria?.telefono);
+    if (!clave) return false;
+    try {
+        const r = await fetch(MARTIN_SHEETS_WEBAPP_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+                action: 'guardarMemoria',
+                memoria: { ...memoria, telefono: clave }
+            })
+        });
+        const data = await r.json();
+        if (!r.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${r.status}`);
+        return true;
+    } catch (e) {
+        console.error('⚠️ No se pudo guardar MEMORIA:', e.message);
+        return false;
+    }
+}
+
+function resumenConversacionPersistente(cliente) {
+    return (cliente?.historial || [])
+        .slice(-12)
+        .map(x => `${x.rol}: ${x.mensaje}`)
+        .join(' | ')
+        .slice(0, 3500);
+}
+
+function resumenHumanoPersistente(telefono) {
+    const estado = getEstadoAtencion(telefono);
+    return (estado?.historialHumano || [])
+        .slice(-20)
+        .map(x => `${x.rol === 'humano' ? 'asesor' : 'cliente'}: ${x.mensaje}`)
+        .join(' | ')
+        .slice(0, 3500);
+}
+
+async function cargarMemoriaPersistente(telefono, cliente) {
+    const clave = normalizarTelefono(telefono);
+    if (!clave || memoriasCargadas.has(clave)) return;
+
+    const m = await leerMemoriaSheets(clave);
+    memoriasCargadas.add(clave);
+    if (!m) return;
+
+    if (!cliente.nombre && m.nombre) cliente.nombre = String(m.nombre);
+    if (!cliente.modelo && m.modeloInteres) cliente.modelo = String(m.modeloInteres);
+    if (!cliente.metodo && m.metodoInteres) cliente.metodo = String(m.metodoInteres);
+    if (m.estadoConversacion) cliente.etapa = String(m.estadoConversacion);
+    if (m.ultimaIntencion) cliente.ultimaIntencionPersistente = String(m.ultimaIntencion);
+
+    if (m.resumenConversacion) {
+        guardarHistorial(cliente, 'contexto',
+            `Resumen de conversación anterior: ${String(m.resumenConversacion)}`);
+    }
+    if (m.resumenIntervencionHumana) {
+        guardarHistorial(cliente, 'contexto',
+            `Resumen de la última intervención humana: ${String(m.resumenIntervencionHumana)}`);
+    }
+
+    const modo = String(m.modo || 'IA').toUpperCase();
+    const reactivar = m.reactivarDespuesDe ? new Date(m.reactivarDespuesDe).getTime() : 0;
+
+    if (modo === 'ESPERA' && reactivar > Date.now()) {
+        setModoAtencion(clave, 'ESPERA', { reactivarDespuesDe: reactivar });
+    } else if (modo === 'HUMANO') {
+        setModoAtencion(clave, 'HUMANO');
+    } else {
+        setModoAtencion(clave, 'IA');
+    }
+
+    console.log(`🧠 Memoria recuperada: ${clave}`);
+}
+
+async function guardarMemoriaPersistente(telefono, cliente, extras = {}) {
+    const clave = normalizarTelefono(telefono);
+    if (!clave) return false;
+
+    const modo = getModoAtencion(clave);
+    const estado = getEstadoAtencion(clave);
+
+    const memoria = {
+        telefono: clave,
+        nombre: extras.nombre || cliente?.nombre || '',
+        modeloInteres: cliente?.modelo || '',
+        metodoInteres: cliente?.metodo || '',
+        estadoConversacion: cliente?.etapa || 'inicio',
+        ultimaIntencion: extras.ultimaIntencion || cliente?.ultimaIntencionPersistente || '',
+        resumenConversacion: resumenConversacionPersistente(cliente),
+        resumenIntervencionHumana:
+            extras.resumenIntervencionHumana !== undefined
+                ? extras.resumenIntervencionHumana
+                : resumenHumanoPersistente(clave),
+        ultimaInteraccion: new Date().toISOString(),
+        modo,
+        reactivarDespuesDe:
+            modo === 'ESPERA' && estado?.reactivarDespuesDe
+                ? new Date(estado.reactivarDespuesDe).toISOString()
+                : '',
+        ultimaRespuestaMartin: cliente?.ultimoMensajeMartin || ''
+    };
+
+    const ok = await escribirMemoriaSheets(memoria);
+    if (ok) console.log(`💾 Memoria sincronizada: ${clave} (${modo})`);
+    return ok;
 }
 
 
@@ -3411,7 +3541,7 @@ app.get(
 
 app.post(
     '/webhook',
-    (req, res) => {
+    async (req, res) => {
 
         res.sendStatus(200);
 
@@ -3464,6 +3594,9 @@ app.post(
                 const textoHumano =
                     echo?.text?.body || '';
 
+                const clienteHumano = getCliente(telefonoCliente);
+                await cargarMemoriaPersistente(telefonoCliente, clienteHumano);
+
                 registrarHistorialHumano(
                     telefonoCliente,
                     'humano',
@@ -3489,6 +3622,11 @@ app.post(
                         `👤 Toma humana detectada desde WhatsApp Business para ${telefonoCliente}`
                     );
                 }
+
+                await guardarMemoriaPersistente(
+                    telefonoCliente,
+                    clienteHumano
+                );
             }
 
             return;
@@ -3623,6 +3761,12 @@ app.post(
                 await esperar(1500);
             }
 
+            const clienteManyChat = getCliente(identificador);
+
+            if (telefono) {
+                await cargarMemoriaPersistente(telefono, clienteManyChat);
+            }
+
             const modoActual =
                 telefono
                     ? getModoAtencion(telefono)
@@ -3646,6 +3790,12 @@ app.post(
                     reiniciarEsperaSiCorresponde(telefono);
                 }
 
+                await guardarMemoriaPersistente(
+                    telefono,
+                    clienteManyChat,
+                    { resumenIntervencionHumana: resumenHumanoPersistente(telefono) }
+                );
+
                 console.log(
                     `🛑 ManyChat suprimido: ${telefono} está en modo ${modoActual}`
                 );
@@ -3658,11 +3808,6 @@ app.post(
                     respuesta: ''
                 });
             }
-
-            const clienteManyChat =
-                getCliente(
-                    identificador
-                );
 
             if (telefono) {
                 volcarHistorialHumanoEnCliente(
@@ -3690,6 +3835,14 @@ app.post(
                     identificador
                 )
             );
+
+            if (telefono) {
+                await guardarMemoriaPersistente(
+                    telefono,
+                    getCliente(identificador),
+                    { nombre: name, ultimaIntencion: mensaje }
+                );
+            }
 
             console.log(
                 `✅ ManyChat respondido a ${identificador}`
@@ -3884,7 +4037,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - CONTEXTO + HORARIOS V3'
+            '🚀 MARTIN IA SELLER - HANDOFF + MEMORIA V4'
         );
 
         console.log(
