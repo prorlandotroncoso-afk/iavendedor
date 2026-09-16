@@ -45,6 +45,10 @@ const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY
 });
 
+const GROQ_MODEL =
+    process.env.GROQ_MODEL ||
+    'qwen/qwen3.8-27b';
+
 
 // ============================================================
 // WHATSAPP CLOUD API - CONFIGURACIÓN
@@ -1434,6 +1438,21 @@ la negación corresponde a la llamada y debe continuar la conversación comercia
 11. Usá el último mensaje de Martín para resolver referencias como "eso", "el detalle",
 "sí", "no", "pasame eso" o "y lo otro".
 
+12. Antes de marcar un mensaje como ambiguo, intentá resolverlo usando TODO el contexto:
+modelo, método, etapa, respuesta esperada y los últimos mensajes.
+
+13. Si el contexto permite una interpretación claramente más probable, NO marques ambigua:
+clasificá esa intención y continuá normalmente.
+
+14. Marcá "ambigua": true SOLO cuando queden DOS O MÁS interpretaciones comerciales
+realmente plausibles y el contexto no permita elegir con seguridad.
+En ese caso escribí en "aclaracion" UNA pregunta corta y concreta que ofrezca las
+alternativas relevantes. Ejemplo:
+"¿Te referís al monto para retirarlo o a los gastos de entrega?"
+
+15. Si el mensaje no se entiende y tampoco hay alternativas concretas, marcá "ambigua": true
+y usá una aclaración breve y específica. Nunca inventes qué quiso decir el cliente.
+
 CONTEXTO:
 
 Etapa:
@@ -1477,7 +1496,9 @@ FORMATO EXACTO:
   "modelo": null,
   "intenciones": [],
   "confirmacion": false,
-  "negacion": false
+  "negacion": false,
+  "ambigua": false,
+  "aclaracion": null
 }
 `;
 
@@ -1486,7 +1507,7 @@ FORMATO EXACTO:
             await groq.chat.completions.create({
 
                 model:
-                    'qwen/qwen3.6-27b',
+                    GROQ_MODEL,
 
                 reasoning_effort:
                     'none',
@@ -1618,6 +1639,16 @@ FORMATO EXACTO:
             negacion:
                 respaldo.negacion ||
                 json.negacion === true,
+
+            ambigua:
+                json.ambigua === true,
+
+            aclaracion:
+                json.ambigua === true &&
+                typeof json.aclaracion === 'string' &&
+                json.aclaracion.trim()
+                    ? json.aclaracion.trim().slice(0, 220)
+                    : null,
 
             referenciaTemporal:
                 respaldo.referenciaTemporal
@@ -2238,7 +2269,7 @@ Respondé directamente.
             await groq.chat.completions.create({
 
                 model:
-                    'qwen/qwen3.6-27b',
+                    GROQ_MODEL,
 
                 reasoning_effort:
                     'none',
@@ -2712,6 +2743,35 @@ async function procesarMensaje(
 
         cliente.modelo =
             analisis.modelo;
+    }
+
+
+    // ========================================================
+    // ACLARACIÓN DE MENSAJES REALMENTE AMBIGUOS
+    // ========================================================
+    //
+    // Qwen primero usa el contexto reciente. Solo llega acá si
+    // todavía quedan dos o más interpretaciones plausibles o si
+    // el mensaje no puede entenderse con seguridad.
+    // ========================================================
+
+    if (
+        analisis.ambigua === true &&
+        analisis.aclaracion
+    ) {
+
+        const respuesta =
+            analisis.aclaracion;
+
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuesta
+        );
+
+
+        return respuesta;
     }
 
 
@@ -4037,7 +4097,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - HANDOFF + MEMORIA V4'
+            '🚀 MARTIN IA SELLER - V4 FINAL + QWEN 3.8 + MEMORIA'
         );
 
         console.log(
