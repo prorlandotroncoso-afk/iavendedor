@@ -3004,6 +3004,62 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // ENTRADA INICIAL DESDE ANUNCIOS / CONSULTA GENERAL
+    // ========================================================
+    // Si el mensaje acaba de identificar un vehículo y no contiene
+    // una consulta comercial específica, damos la información inicial
+    // inmediatamente. El saludo nunca debe tapar el interés por el modelo.
+    // Ejemplos: "Hola, quiero información del C3", "info 2008",
+    // "vi el anuncio del C3", "me interesa el 2008".
+    // ========================================================
+
+    const intencionesComercialesEspecificas = [
+        'financiacion',
+        'directa',
+        'cuotas',
+        'requisitos',
+        'precio',
+        'gastos_entrega',
+        'entrega',
+        'equipamiento',
+        'material',
+        'avanzar'
+    ];
+
+    const tieneConsultaComercialEspecifica =
+        analisis.intenciones.some(
+            i => intencionesComercialesEspecificas.includes(i)
+        );
+
+    if (
+        analisis.modelo &&
+        !tieneConsultaComercialEspecifica
+    ) {
+        cliente.etapa = 'esperando_metodo';
+        cliente.esperandoRespuesta = 'metodo_compra';
+        cliente.opcionesEsperadas = [
+            'directa',
+            'financiacion'
+        ];
+
+        const respuesta = responderInfoInicial(vehiculo);
+
+        console.log(
+            '🚗 Respuesta inicial de anuncio:',
+            respuesta
+        );
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuesta
+        );
+
+        return respuesta;
+    }
+
+
+    // ========================================================
     // PRIORIDAD ABSOLUTA:
     // PREGUNTAS COMERCIALES EXPLÍCITAS
     // ========================================================
@@ -3354,66 +3410,6 @@ async function procesarMensaje(
 
         respuesta +=
             ` Si querés avanzar con una propuesta, te puedo poner en contacto con ${seller.asesorDerivacion || 'Edgardo'}.`;
-
-
-        guardarHistorial(
-            cliente,
-            'martin',
-            respuesta
-        );
-
-
-        return respuesta;
-    }
-
-
-    // ========================================================
-    // MODELO NUEVO
-    // ========================================================
-
-    const preguntasComerciales = [
-
-        'financiacion',
-        'directa',
-        'cuotas',
-        'requisitos',
-        'precio',
-        'gastos_entrega',
-        'entrega',
-        'equipamiento',
-        'material',
-        'avanzar'
-    ];
-
-
-    const tienePreguntaComercial =
-        analisis.intenciones.some(
-            i =>
-                preguntasComerciales.includes(i)
-        );
-
-
-    if (
-        analisis.modelo &&
-        !tienePreguntaComercial
-    ) {
-
-        cliente.etapa =
-            'esperando_metodo';
-
-
-        cliente.esperandoRespuesta =
-            'metodo_compra';
-
-
-        cliente.opcionesEsperadas = [
-            'directa',
-            'financiacion'
-        ];
-
-
-        const respuesta =
-            responderInfoInicial(vehiculo);
 
 
         guardarHistorial(
@@ -4018,6 +4014,11 @@ app.post(
 
             console.log(
                 `✅ ManyChat respondido a ${identificador}`
+            );
+
+            console.log(
+                '📤 Respuesta enviada a ManyChat:',
+                reply
             );
 
             return res.json({
