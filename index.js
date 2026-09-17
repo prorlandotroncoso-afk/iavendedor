@@ -1479,6 +1479,14 @@ alternativas relevantes. Ejemplo:
 15. Si el mensaje no se entiende y tampoco hay alternativas concretas, marcá "ambigua": true
 y usá una aclaración breve y específica. Nunca inventes qué quiso decir el cliente.
 
+16. IMPORTANTE: "info", "información", "quiero información", "quiero saber más",
+"me interesa", "vi el anuncio" o "quería consultar" NO significan material.
+Si además se menciona un modelo, representan interés o consulta general sobre ese vehículo.
+En esos casos NO agregues la intención "material".
+
+17. Usá "material" SOLAMENTE cuando el cliente pida explícitamente un PDF, ficha técnica,
+folleto, pauta, catálogo, archivo, documento o material comercial.
+
 CONTEXTO:
 
 Etapa:
@@ -1644,6 +1652,29 @@ FORMATO EXACTO:
         // determina localmente a partir del texto real del cliente.
         if (!tieneSaludoInicial(mensaje) && !esSaludo(mensaje)) {
             intencionesIA = intencionesIA.filter(i => i !== 'saludo');
+        }
+
+        // "Info" o "información" sobre un modelo NO es pedido de PDF/material.
+        // Material queda reservado a pedidos explícitos de archivos o piezas comerciales.
+        const pideMaterialExplicito =
+            contieneAlguna(
+                mensaje,
+                [
+                    'pdf',
+                    'ficha tecnica',
+                    'folleto',
+                    'pauta',
+                    'catalogo',
+                    'archivo',
+                    'documento',
+                    'material comercial',
+                    'pasame el material',
+                    'mandame el material'
+                ]
+            );
+
+        if (!pideMaterialExplicito) {
+            intencionesIA = intencionesIA.filter(i => i !== 'material');
         }
 
 
