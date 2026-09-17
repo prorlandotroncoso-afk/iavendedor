@@ -94,6 +94,31 @@ const clientes = {};
 
 const modosAtencion = new Map();
 
+// V5: una cola por contacto. Nunca procesamos dos mensajes del mismo
+// teléfono al mismo tiempo. Esto evita carreras de estado cuando el cliente
+// escribe rápido o ManyChat reintenta una solicitud.
+const colasPorContacto = new Map();
+let secuenciaSolicitudes = 0;
+
+function ejecutarEnColaContacto(clave, tarea) {
+    const id = String(clave || 'sin-id');
+    const anterior = colasPorContacto.get(id) || Promise.resolve();
+
+    const actual = anterior
+        .catch(() => {})
+        .then(tarea);
+
+    colasPorContacto.set(id, actual);
+
+    actual.finally(() => {
+        if (colasPorContacto.get(id) === actual) {
+            colasPorContacto.delete(id);
+        }
+    });
+
+    return actual;
+}
+
 const MINUTOS_REACTIVACION = 30;
 const FRASE_CIERRE_HUMANO =
     'perfecto cualquier otra consulta podes escribirnos por aca';
@@ -2513,12 +2538,20 @@ async function procesarRespuestaEsperada(
         cliente.esperandoRespuesta ===
         'uso_vehiculo'
     ) {
+        const usoDetectado = respuestaUsoVehiculo(mensaje);
+        const usoValido =
+            usoDetectado === 'trabajo' ||
+            usoDetectado === 'uso general';
 
-        cliente.usoVehiculo =
-            respuestaUsoVehiculo(mensaje);
+        // Solo consumimos el estado si realmente respondió la pregunta.
+        // Si escribió "financiación", "cuotas", "precio", etc., dejamos que
+        // el enrutador general atienda esa consulta sin falsear la calificación.
+        if (!usoValido) {
+            return null;
+        }
 
-        cliente.esperandoRespuesta =
-            'decision_compra';
+        cliente.usoVehiculo = usoDetectado;
+        cliente.esperandoRespuesta = 'decision_compra';
 
         return (
             'Perfecto. Y te consulto una cosa más: ' +
@@ -2535,15 +2568,23 @@ async function procesarRespuestaEsperada(
         cliente.esperandoRespuesta ===
         'decision_compra'
     ) {
+        const esCompartida = decisionEsCompartida(mensaje);
+        const esIndividual = decisionEsIndividual(mensaje);
+
+        // Igual que con el uso: no avanzamos de etapa si el cliente hizo otra
+        // consulta en vez de responder quién toma la decisión.
+        if (!esCompartida && !esIndividual) {
+            return null;
+        }
 
         cliente.decisionCompra =
-            String(mensaje || '').trim();
+            esCompartida ? 'compartida' : 'individual';
 
         cliente.calificacionCompletada =
             true;
 
         if (
-            decisionEsCompartida(mensaje)
+            esCompartida
         ) {
 
             cliente.llamadaConjuntaOfrecida =
@@ -4010,86 +4051,74 @@ app.post(
 // }
 // ============================================================
 
-app.post(
-    '/manychat',
-    async (req, res) => {
+// ============================================================
+// MANYCHAT V5 - MOTOR ÚNICO + RESPUESTA DIRECTA
+// ============================================================
+//
+// /manychat se conserva para rollback y diagnóstico.
+// /manychat-dynamic es la ruta recomendada: ManyChat recibe el mensaje
+// dinámico directamente del servidor y NO depende de martin_respuesta.
+// Así eliminamos el punto de carrera del Custom User Field.
+// ============================================================
 
-        const body =
-            req.body || {};
+async function procesarEntradaManyChat(body = {}) {
+    const message =
+        body.message ??
+        body.mensaje ??
+        body.text ??
+        body.lastTextInput ??
+        body.last_input_text ??
+        '';
 
-        const message =
-            body.message ??
-            body.mensaje ??
-            body.text ??
-            body.lastTextInput ??
-            '';
+    const userId =
+        body.userId ??
+        body.user_id ??
+        body.contactId ??
+        body.contact_id ??
+        '';
 
-        const userId =
-            body.userId ??
-            body.user_id ??
-            body.contactId ??
-            body.contact_id ??
-            '';
+    const telefonoRecibido =
+        body.telefono ??
+        body.phone ??
+        body.wa_id ??
+        body.whatsappId ??
+        body.whatsapp_id ??
+        '';
 
-        const telefonoRecibido =
-            body.telefono ??
-            body.phone ??
-            body.wa_id ??
-            body.whatsappId ??
-            body.whatsapp_id ??
-            '';
+    const name =
+        body.name ??
+        body.nombre ??
+        body.firstName ??
+        body.first_name ??
+        '';
 
-        const name =
-            body.name ??
-            body.nombre ??
-            body.firstName ??
-            body.first_name ??
-            '';
+    const mensaje = String(message || '').trim();
+    const telefono = normalizarTelefono(telefonoRecibido);
+    const identificadorManyChat = String(userId || '').trim();
+    const identificador = telefono || identificadorManyChat;
 
-        const mensaje =
-            String(message || '').trim();
+    if (!mensaje) {
+        const error = new Error('Falta el mensaje del cliente');
+        error.statusCode = 400;
+        throw error;
+    }
 
-        const telefono =
-            normalizarTelefono(
-                telefonoRecibido
-            );
+    if (!identificador) {
+        const error = new Error('Falta un identificador estable del contacto');
+        error.statusCode = 400;
+        throw error;
+    }
 
-        const identificadorManyChat =
-            String(userId || '').trim();
+    const requestId = `${Date.now().toString(36)}-${(++secuenciaSolicitudes).toString(36)}`;
 
-        const identificador =
-            telefono ||
-            identificadorManyChat;
-
-        if (!mensaje) {
-
-            return res
-                .status(400)
-                .json({
-                    ok: false,
-                    error: 'Falta el mensaje del cliente'
-                });
-        }
-
-        if (!identificador) {
-
-            return res
-                .status(400)
-                .json({
-                    ok: false,
-                    error: 'Falta un identificador estable del contacto'
-                });
-        }
-
-        try {
-
+    return ejecutarEnColaContacto(
+        identificador,
+        async () => {
             console.log(
-                `📥 ManyChat entrante de ${identificador} (MC ${identificadorManyChat || 'sin ID'}): ${mensaje}`
+                `📥 [${requestId}] ManyChat entrante de ${identificador} (MC ${identificadorManyChat || 'sin ID'}): ${mensaje}`
             );
 
-            // Damos una ventana breve para que, si el mensaje fue enviado
-            // manualmente desde WhatsApp Business App, llegue primero el
-            // smb_message_echoes y cambie el contacto a HUMANO.
+            // Ventana para que llegue smb_message_echoes si tomó el chat una persona.
             if (telefono) {
                 await esperar(1500);
             }
@@ -4107,88 +4136,49 @@ app.post(
 
             if (
                 telefono &&
-                (
-                    modoActual === 'HUMANO' ||
-                    modoActual === 'ESPERA'
-                )
+                (modoActual === 'HUMANO' || modoActual === 'ESPERA')
             ) {
-
-                registrarHistorialHumano(
-                    telefono,
-                    'cliente',
-                    mensaje
-                );
+                registrarHistorialHumano(telefono, 'cliente', mensaje);
 
                 if (modoActual === 'ESPERA') {
                     reiniciarEsperaSiCorresponde(telefono);
                 }
 
-                await guardarMemoriaPersistente(
-                    telefono,
-                    clienteManyChat,
-                    { resumenIntervencionHumana: resumenHumanoPersistente(telefono) }
-                );
+                // No bloqueamos la respuesta al cliente por una escritura de Sheets.
+                Promise.resolve()
+                    .then(() => guardarMemoriaPersistente(
+                        telefono,
+                        clienteManyChat,
+                        { resumenIntervencionHumana: resumenHumanoPersistente(telefono) }
+                    ))
+                    .catch(error => {
+                        console.error(`⚠️ [${requestId}] Error guardando memoria humana:`, error.message);
+                    });
 
-                console.log(
-                    `🛑 ManyChat suprimido: ${telefono} está en modo ${modoActual}`
-                );
+                console.log(`🛑 [${requestId}] Respuesta suprimida: modo ${modoActual}`);
 
-                return res.json({
+                return {
                     ok: true,
+                    requestId,
                     modo: modoActual,
                     responder: false,
-                    reply: '',
-                    respuesta: ''
-                });
+                    reply: ''
+                };
             }
 
             if (telefono) {
-                volcarHistorialHumanoEnCliente(
-                    telefono,
-                    clienteManyChat
-                );
+                volcarHistorialHumanoEnCliente(telefono, clienteManyChat);
             }
 
             if (name) {
-
-                clienteManyChat.nombre =
-                    String(name).trim();
+                clienteManyChat.nombre = String(name).trim();
             }
 
-            const reply =
-                await procesarMensaje(
-                    mensaje,
-                    identificador
-                );
+            const reply = await procesarMensaje(mensaje, identificador);
 
-            // Respondemos a ManyChat ANTES de las escrituras auxiliares en Sheets.
-            // ManyChat tiene una ventana corta para la solicitud externa; si esperamos
-            // a sincronizar LEADS/MEMORIA primero, puede continuar el flujo usando el
-            // valor anterior de martin_respuesta.
-            console.log(
-                `✅ ManyChat respondido a ${identificador}`
-            );
+            console.log(`📤 [${requestId}] Respuesta Martin: ${reply}`);
 
-            console.log(
-                '📤 Respuesta enviada a ManyChat:',
-                reply
-            );
-
-            res.set({
-                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
-            });
-
-            res.json({
-                ok: true,
-                modo: 'IA',
-                responder: true,
-                reply,
-                respuesta: reply
-            });
-
-            // Persistencia posterior a la respuesta: no bloquea a ManyChat.
+            // Persistencia asíncrona: nunca retrasa la respuesta de ManyChat.
             Promise.resolve()
                 .then(async () => {
                     await sincronizarLeadWhatsApp(
@@ -4206,27 +4196,99 @@ app.post(
                     }
                 })
                 .catch(error => {
-                    console.error(
-                        '⚠️ Error de persistencia posterior a ManyChat:',
-                        error.message
-                    );
+                    console.error(`⚠️ [${requestId}] Error de persistencia:`, error.message);
                 });
 
-            return;
+            return {
+                ok: true,
+                requestId,
+                modo: 'IA',
+                responder: true,
+                reply
+            };
+        }
+    );
+}
 
+
+// Ruta anterior: queda disponible como rollback/diagnóstico.
+app.post(
+    '/manychat',
+    async (req, res) => {
+        try {
+            const resultado = await procesarEntradaManyChat(req.body || {});
+
+            res.set({
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
+
+            return res.json({
+                ok: resultado.ok,
+                requestId: resultado.requestId,
+                modo: resultado.modo,
+                responder: resultado.responder,
+                reply: resultado.reply,
+                respuesta: resultado.reply
+            });
         } catch (error) {
-
-            console.error(
-                '❌ Error procesando ManyChat:',
-                error
-            );
-
+            console.error('❌ Error procesando /manychat:', error);
             return res
-                .status(500)
-                .json({
-                    ok: false,
-                    error: 'Error procesando mensaje'
+                .status(error.statusCode || 500)
+                .json({ ok: false, error: error.message || 'Error procesando mensaje' });
+        }
+    }
+);
+
+
+// Ruta recomendada V5: Dynamic Block de ManyChat.
+// La respuesta se convierte directamente en el mensaje de WhatsApp.
+// No usa martin_respuesta ni martin_modo para transportar el texto.
+app.post(
+    '/manychat-dynamic',
+    async (req, res) => {
+        try {
+            const resultado = await procesarEntradaManyChat(req.body || {});
+
+            res.set({
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'X-Martin-Request-Id': resultado.requestId
+            });
+
+            if (!resultado.responder) {
+                // Dynamic Block sin mensajes: no se envía nada al cliente mientras
+                // el chat está en HUMANO/ESPERA.
+                return res.json({
+                    version: 'v2',
+                    content: {
+                        type: 'whatsapp',
+                        messages: [],
+                        actions: []
+                    }
                 });
+            }
+
+            return res.json({
+                version: 'v2',
+                content: {
+                    type: 'whatsapp',
+                    messages: [
+                        {
+                            type: 'text',
+                            text: resultado.reply
+                        }
+                    ],
+                    actions: []
+                }
+            });
+        } catch (error) {
+            console.error('❌ Error procesando /manychat-dynamic:', error);
+            return res
+                .status(error.statusCode || 500)
+                .json({ ok: false, error: error.message || 'Error procesando mensaje' });
         }
     }
 );
