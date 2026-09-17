@@ -2827,6 +2827,84 @@ async function procesarMensaje(
         false;
 
 
+    // ========================================================
+    // RUTA RÁPIDA: ENTRADA DESDE PUBLICIDAD / CONSULTA GENERAL
+    // ========================================================
+    // Los mensajes típicos de anuncios no necesitan pasar primero
+    // por Qwen. Esto evita que "quiero información" sea confundido
+    // con financiación/material y, además, responde más rápido a ManyChat.
+    // Ejemplos: "Hola, quiero información del C3", "info c3",
+    // "me interesa el 2008", "vi el anuncio del C3".
+    // ========================================================
+
+    const modeloDirectoInicial =
+        await detectarModeloDirecto(mensaje);
+
+    const textoInicialNormalizado =
+        normalizar(mensaje);
+
+    const pideDatoEspecificoInicial =
+        contieneAlguna(
+            mensaje,
+            [
+                'financiacion', 'financiamiento', 'financiar', 'plan', 'credito',
+                'cuota', 'cuotas', 'precio', 'valor', 'contado', 'directa',
+                'requisito', 'requisitos', 'gastos de entrega', 'gasto de entrega',
+                'entrega', 'adjudicacion', 'equipamiento', 'pdf', 'ficha tecnica',
+                'folleto', 'catalogo', 'material comercial'
+            ]
+        );
+
+    const expresaInteresGeneralInicial =
+        contieneAlguna(
+            mensaje,
+            [
+                'info', 'informacion', 'quiero saber', 'quisiera saber',
+                'saber mas', 'me interesa', 'interesado', 'interesada',
+                'vi el anuncio', 'vi la publicidad', 'queria consultar',
+                'quiero consultar', 'consulta'
+            ]
+        );
+
+    if (
+        modeloDirectoInicial &&
+        expresaInteresGeneralInicial &&
+        !pideDatoEspecificoInicial
+    ) {
+        cliente.modelo = modeloDirectoInicial;
+
+        const vehiculoInicial =
+            await obtenerVehiculo(modeloDirectoInicial);
+
+        if (vehiculoInicial) {
+            cliente.etapa = 'esperando_metodo';
+            cliente.esperandoRespuesta = 'metodo_compra';
+            cliente.opcionesEsperadas = ['directa', 'financiacion'];
+
+            const respuestaInicial =
+                responderInfoInicial(vehiculoInicial);
+
+            console.log(
+                '🚗 Ruta rápida de anuncio:',
+                modeloDirectoInicial
+            );
+
+            console.log(
+                '🚗 Respuesta inicial de anuncio:',
+                respuestaInicial
+            );
+
+            guardarHistorial(
+                cliente,
+                'martin',
+                respuestaInicial
+            );
+
+            return respuestaInicial;
+        }
+    }
+
+
     const analisis =
         await interpretarMensaje(
             mensaje,
@@ -3996,22 +4074,10 @@ app.post(
                     identificador
                 );
 
-            await sincronizarLeadWhatsApp(
-                telefono || identificador,
-                name,
-                getCliente(
-                    identificador
-                )
-            );
-
-            if (telefono) {
-                await guardarMemoriaPersistente(
-                    telefono,
-                    getCliente(identificador),
-                    { nombre: name, ultimaIntencion: mensaje }
-                );
-            }
-
+            // Respondemos a ManyChat ANTES de las escrituras auxiliares en Sheets.
+            // ManyChat tiene una ventana corta para la solicitud externa; si esperamos
+            // a sincronizar LEADS/MEMORIA primero, puede continuar el flujo usando el
+            // valor anterior de martin_respuesta.
             console.log(
                 `✅ ManyChat respondido a ${identificador}`
             );
@@ -4021,13 +4087,39 @@ app.post(
                 reply
             );
 
-            return res.json({
+            res.json({
                 ok: true,
                 modo: 'IA',
                 responder: true,
                 reply,
                 respuesta: reply
             });
+
+            // Persistencia posterior a la respuesta: no bloquea a ManyChat.
+            Promise.resolve()
+                .then(async () => {
+                    await sincronizarLeadWhatsApp(
+                        telefono || identificador,
+                        name,
+                        getCliente(identificador)
+                    );
+
+                    if (telefono) {
+                        await guardarMemoriaPersistente(
+                            telefono,
+                            getCliente(identificador),
+                            { nombre: name, ultimaIntencion: mensaje }
+                        );
+                    }
+                })
+                .catch(error => {
+                    console.error(
+                        '⚠️ Error de persistencia posterior a ManyChat:',
+                        error.message
+                    );
+                });
+
+            return;
 
         } catch (error) {
 
