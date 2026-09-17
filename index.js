@@ -1833,6 +1833,19 @@ function responderFinanciacion(
 }
 
 
+function responderFinanciacionParaCalificar(vehiculo) {
+
+    const respuesta = responderFinanciacion(vehiculo);
+
+    return String(respuesta || '')
+        .replace(
+            /\s*¿Querés conocer los requisitos o el detalle de las cuotas\?\s*$/i,
+            ''
+        )
+        .trim();
+}
+
+
 function responderCuotas(
     vehiculo
 ) {
@@ -3350,6 +3363,34 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // PRIORIDAD AL ESTADO CONVERSACIONAL
+    // ========================================================
+    // Si Martín acaba de hacer una pregunta de calificación, la respuesta
+    // del cliente se procesa como respuesta a ESA pregunta antes de mirar
+    // las intenciones de Qwen. Así "trabajo", "uso general", "solo",
+    // etc. no reinician el flujo de financiación.
+
+    if (
+        cliente.esperandoRespuesta === 'uso_vehiculo' ||
+        cliente.esperandoRespuesta === 'decision_compra'
+    ) {
+
+        const respuestaEstado =
+            await procesarRespuestaEsperada(
+                mensaje,
+                cliente,
+                analisis,
+                vehiculo
+            );
+
+        if (respuestaEstado) {
+            guardarHistorial(cliente, 'martin', respuestaEstado);
+            return respuestaEstado;
+        }
+    }
+
+
+    // ========================================================
     // FINANCIACIÓN
     // ========================================================
 
@@ -3431,9 +3472,12 @@ async function procesarMensaje(
         cliente.opcionesEsperadas = [];
 
 
+        const detalleFinanciacion =
+            responderFinanciacionParaCalificar(vehiculo);
+
         const respuesta =
-            'Perfecto. Antes de pasarte el detalle, te hago un par de preguntas cortitas para orientarme un poco. ' +
-            '¿El vehículo lo necesitás para trabajo o para uso general?';
+            `${detalleFinanciacion} Para orientarte mejor, ` +
+            '¿el vehículo lo necesitás para trabajo o para uso general?';
 
 
         guardarHistorial(
