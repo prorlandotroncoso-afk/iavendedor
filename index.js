@@ -2472,6 +2472,40 @@ async function procesarRespuestaEsperada(
 ) {
 
     // --------------------------------------------------------
+    // ELECCIÓN DESPUÉS DE LA INFORMACIÓN INICIAL
+    // --------------------------------------------------------
+    // Si Martín ofreció financiación o adquisición directa y el cliente
+    // responde solo "dale", "sí", "ok", etc., no adivinamos cuál
+    // de las dos opciones quiso elegir. Pedimos una aclaración concreta.
+
+    if (
+        cliente.esperandoRespuesta ===
+        'metodo_compra'
+    ) {
+
+        if (
+            analisis.intenciones.includes('financiacion') ||
+            analisis.intenciones.includes('directa')
+        ) {
+            // La intención explícita se procesa en el enrutador general.
+            cliente.esperandoRespuesta = null;
+            cliente.opcionesEsperadas = [];
+            return null;
+        }
+
+        if (
+            analisis.confirmacion ||
+            esConfirmacionSimple(mensaje)
+        ) {
+            return (
+                'Dale. ¿Querés que te cuente cómo funciona la financiación ' +
+                'o preferís información para adquisición directa?'
+            );
+        }
+    }
+
+
+    // --------------------------------------------------------
     // CALIFICACIÓN SUAVE: USO DEL VEHÍCULO
     // --------------------------------------------------------
 
@@ -2885,6 +2919,15 @@ async function procesarMensaje(
         !pideDatoEspecificoInicial
     ) {
         cliente.modelo = modeloDirectoInicial;
+
+        // Una nueva entrada explícita desde publicidad inicia un recorrido comercial
+        // fresco para ese vehículo. Conservamos la memoria general, pero no arrastramos
+        // preguntas de calificación pendientes de una conversación anterior.
+        cliente.usoVehiculo = null;
+        cliente.decisionCompra = null;
+        cliente.calificacionCompletada = false;
+        cliente.derivacionSolicitada = false;
+        cliente.opcionesEsperadas = [];
 
         const vehiculoInicial =
             await obtenerVehiculo(modeloDirectoInicial);
@@ -4131,6 +4174,12 @@ app.post(
                 reply
             );
 
+            res.set({
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
+
             res.json({
                 ok: true,
                 modo: 'IA',
@@ -4346,7 +4395,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - V4 PUBLICIDAD + QWEN 3.8 + MEMORIA'
+            '🚀 MARTIN IA SELLER - V4.4 AJUSTES FINALES + MEMORIA'
         );
 
         console.log(
@@ -4362,7 +4411,7 @@ app.listen(
         );
 
         console.log(
-            '🧠 IA: Groq / Qwen 3.6 27B'
+            `🧠 IA: Groq / ${GROQ_MODEL}`
         );
 
         console.log(
