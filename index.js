@@ -869,6 +869,14 @@ function esSaludo(texto) {
 }
 
 
+function tieneSaludoInicial(texto) {
+
+    const t = normalizar(texto);
+
+    return /^(hola|buenas|buen dia|buenas tardes|buenas noches|que tal|como estas)(\b|[,!.?])/i.test(t);
+}
+
+
 function nombreVehiculo(vehiculo, fallback) {
 
     return (
@@ -1022,12 +1030,29 @@ async function detectarModeloDirecto(mensaje) {
             );
 
 
+        // Los anuncios suelen mencionar una versión corta del modelo
+        // (por ejemplo "C3" o "2008") aunque en Sheets figure
+        // "Citroën C3 Feel Look". Detectamos tokens distintivos con
+        // números sin depender de una lista fija por vehículo.
+        const tokensDistintivos =
+            modeloCompleto
+                .split(/\s+/)
+                .filter(token => /\d/.test(token));
+
+        const coincideTokenDistintivo =
+            tokensDistintivos.some(token => {
+                const patron = new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
+                return patron.test(texto);
+            });
+
+
         if (
             texto.includes(key) ||
             (
                 modeloCompleto &&
                 texto.includes(modeloCompleto)
-            )
+            ) ||
+            coincideTokenDistintivo
         ) {
 
             return vehiculo.key;
@@ -1055,6 +1080,7 @@ async function clasificarLocal(mensaje) {
 
 
     if (
+        tieneSaludoInicial(mensaje) ||
         esSaludo(mensaje)
     ) {
 
@@ -1603,7 +1629,7 @@ FORMATO EXACTO:
         ];
 
 
-        const intencionesIA =
+        let intencionesIA =
             Array.isArray(
                 json.intenciones
             )
@@ -1612,6 +1638,13 @@ FORMATO EXACTO:
                         intencionesValidas.includes(i)
                 )
                 : [];
+
+
+        // Qwen no puede inventar un saludo. La presencia de saludo se
+        // determina localmente a partir del texto real del cliente.
+        if (!tieneSaludoInicial(mensaje) && !esSaludo(mensaje)) {
+            intencionesIA = intencionesIA.filter(i => i !== 'saludo');
+        }
 
 
         const intenciones = [
@@ -1671,6 +1704,43 @@ FORMATO EXACTO:
 // ============================================================
 // 9. RESPUESTAS CONTROLADAS
 // ============================================================
+
+function responderInfoInicial(vehiculo) {
+
+    const datos = [];
+
+    if (vehiculo.plan) {
+        datos.push(`tiene un plan ${vehiculo.plan}`);
+    }
+
+    if (vehiculo.plazo) {
+        datos.push(`a ${vehiculo.plazo} cuotas`);
+    }
+
+    if (vehiculo.precioLista) {
+        datos.push(`el precio de lista es de ${formatearPesos(vehiculo.precioLista)}`);
+    }
+
+    const cuotaIngreso =
+        vehiculo.cuota_1 ||
+        vehiculo.cuota1 ||
+        null;
+
+    if (cuotaIngreso) {
+        datos.push(`la cuota 1 es de ${formatearPesos(cuotaIngreso)}`);
+    }
+
+    const introduccion =
+        datos.length > 0
+            ? `Te cuento: el ${nombreVehiculo(vehiculo)} ${datos.join(', ')}.`
+            : `Claro. Tengo información del ${nombreVehiculo(vehiculo)}.`;
+
+    return (
+        `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion} ` +
+        '¿Querés que te cuente cómo funciona la financiación o preferís información para adquisición directa?'
+    );
+}
+
 
 function responderFinanciacion(
     vehiculo
@@ -2733,6 +2803,18 @@ async function procesarMensaje(
         );
 
 
+    console.log(
+        '🧠 Interpretación:',
+        JSON.stringify({
+            mensaje,
+            modelo: analisis.modelo || null,
+            intenciones: analisis.intenciones || [],
+            ambigua: analisis.ambigua === true,
+            aclaracion: analisis.aclaracion || null
+        })
+    );
+
+
     // ========================================================
     // ACTUALIZAR MODELO
     // ========================================================
@@ -3300,8 +3382,7 @@ async function procesarMensaje(
 
 
         const respuesta =
-            `Perfecto. Tengo información del ${nombreVehiculo(vehiculo)}. ` +
-            '¿Buscás adquisición directa o financiación de fábrica?';
+            responderInfoInicial(vehiculo);
 
 
         guardarHistorial(
@@ -4097,7 +4178,7 @@ app.listen(
     () => {
 
         console.log(
-            '🚀 MARTIN IA SELLER - V4 FINAL + QWEN 3.8 + MEMORIA'
+            '🚀 MARTIN IA SELLER - V4 PUBLICIDAD + QWEN 3.8 + MEMORIA'
         );
 
         console.log(
