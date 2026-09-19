@@ -4114,20 +4114,28 @@ async function procesarEntradaManyChat(body = {}) {
     return ejecutarEnColaContacto(
         identificador,
         async () => {
+            const inicioSolicitud = Date.now();
+            const marcarTiempo = (etapa) => {
+                console.log(`⏱️ [${requestId}] ${etapa}: ${Date.now() - inicioSolicitud} ms`);
+            };
+
             console.log(
                 `📥 [${requestId}] ManyChat entrante de ${identificador} (MC ${identificadorManyChat || 'sin ID'}): ${mensaje}`
             );
 
-            // Ventana para que llegue smb_message_echoes si tomó el chat una persona.
-            if (telefono) {
-                await esperar(1500);
-            }
-
+            // No esperamos artificialmente antes de responder. El webhook de Meta
+            // actualiza IA/HUMANO/ESPERA de forma independiente cuando llega un echo.
+            // ManyChat tiene un presupuesto corto para la Solicitud externa, por eso
+            // cada milisegundo del camino crítico debe corresponder a trabajo necesario.
             const clienteManyChat = getCliente(identificador);
 
             if (telefono) {
+                const inicioMemoria = Date.now();
                 await cargarMemoriaPersistente(telefono, clienteManyChat);
+                console.log(`⏱️ [${requestId}] memoria: ${Date.now() - inicioMemoria} ms`);
             }
+
+            marcarTiempo('estado listo');
 
             const modoActual =
                 telefono
@@ -4174,9 +4182,12 @@ async function procesarEntradaManyChat(body = {}) {
                 clienteManyChat.nombre = String(name).trim();
             }
 
+            const inicioProcesamiento = Date.now();
             const reply = await procesarMensaje(mensaje, identificador);
+            console.log(`⏱️ [${requestId}] procesamiento: ${Date.now() - inicioProcesamiento} ms`);
 
             console.log(`📤 [${requestId}] Respuesta Martin: ${reply}`);
+            marcarTiempo('respuesta lista');
 
             // Persistencia asíncrona: nunca retrasa la respuesta de ManyChat.
             Promise.resolve()
@@ -4223,6 +4234,8 @@ app.post(
                 'Pragma': 'no-cache',
                 'Expires': '0'
             });
+
+            console.log(`✅ [${resultado.requestId}] JSON entregado a ManyChat`);
 
             return res.json({
                 ok: resultado.ok,
