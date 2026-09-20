@@ -2598,6 +2598,24 @@ async function procesarRespuestaEsperada(
 
         if (tieneEfectivo) {
             cliente.capitalDirectaTipo = 'efectivo';
+
+            // Si el cliente ya informó un monto en el mismo mensaje
+            // (por ejemplo: "tengo 10 millones en efectivo"), no se lo
+            // volvemos a preguntar: conservamos el dato y derivamos.
+            if (/\d/.test(t)) {
+                cliente.capitalDirectaDetalle = mensaje;
+                cliente.derivacionSolicitada = true;
+                cliente.etapa = 'esperando_horario';
+                cliente.esperandoRespuesta = 'horario_contacto';
+                cliente.opcionesEsperadas = [];
+
+                return (
+                    'Perfecto. Con esta información te derivo con Edgardo o con Orlando; ' +
+                    'el que esté disponible se va a contactar primero con vos para mostrarte ' +
+                    'las opciones que tenemos para ofrecerte. ¿Qué día y horario te queda cómodo?'
+                );
+            }
+
             cliente.esperandoRespuesta = 'monto_efectivo_directa';
             cliente.opcionesEsperadas = [];
 
