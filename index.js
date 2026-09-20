@@ -404,6 +404,10 @@ function getCliente(userId) {
 
             decisionCompra: null,
 
+            capitalDirectaTipo: null,
+
+            capitalDirectaDetalle: null,
+
             calificacionCompletada: false,
 
             llamadaConjuntaOfrecida: false,
@@ -769,8 +773,7 @@ async function sincronizarLeadWhatsApp(
                     cliente.etapa === 'derivado'
                 )
                     ? (
-                        seller.asesorDerivacion ||
-                        'Edgardo'
+                        'Edgardo u Orlando'
                     )
                     : '',
 
@@ -2035,7 +2038,7 @@ function responderRequisitos(
 
     return (
         partes.join(' y ') +
-        `. ¿Querés que te contacte ${seller.asesorDerivacion || 'Edgardo'} para avanzar?`
+        '. ¿Querés que te derive con Edgardo u Orlando para avanzar? El que esté disponible se va a contactar primero con vos.'
     );
 }
 
@@ -2531,6 +2534,134 @@ async function procesarRespuestaEsperada(
 
 
     // --------------------------------------------------------
+    // ADQUISICIÓN DIRECTA: CAPITAL DISPONIBLE
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'capital_directa'
+    ) {
+        const t = normalizar(mensaje);
+
+        const sinCapital =
+            analisis.negacion ||
+            contieneAlguna(t, [
+                'nada',
+                'no tengo',
+                'sin capital',
+                'ninguno',
+                'ninguna'
+            ]);
+
+        if (sinCapital) {
+            cliente.capitalDirectaTipo = 'sin capital';
+            cliente.capitalDirectaDetalle = mensaje;
+            cliente.derivacionSolicitada = true;
+            cliente.etapa = 'esperando_horario';
+            cliente.esperandoRespuesta = 'horario_contacto';
+            cliente.opcionesEsperadas = [];
+
+            return (
+                'No hay problema. Te derivo con Edgardo o con Orlando; ' +
+                'el que esté disponible se va a contactar primero con vos. ' +
+                '¿Qué día y horario te queda cómodo?'
+            );
+        }
+
+        const tieneVehiculo = contieneAlguna(t, [
+            'auto',
+            'vehiculo',
+            'vehículo',
+            'camioneta',
+            'usado',
+            'moto'
+        ]);
+
+        if (tieneVehiculo) {
+            cliente.capitalDirectaTipo = 'vehiculo';
+            cliente.esperandoRespuesta = 'datos_vehiculo_directa';
+            cliente.opcionesEsperadas = [];
+
+            return (
+                'Perfecto. ¿Podrías pasarme marca, modelo y en qué valor estimás que está? ' +
+                'Así puedo orientarte mejor.'
+            );
+        }
+
+        const tieneEfectivo = contieneAlguna(t, [
+            'efectivo',
+            'dinero',
+            'plata',
+            'ahorros',
+            'capital'
+        ]) || /\d/.test(t);
+
+        if (tieneEfectivo) {
+            cliente.capitalDirectaTipo = 'efectivo';
+            cliente.esperandoRespuesta = 'monto_efectivo_directa';
+            cliente.opcionesEsperadas = [];
+
+            return (
+                'Perfecto. ¿Con qué monto aproximado contás? ' +
+                'Así puedo orientarte mejor.'
+            );
+        }
+
+        if (analisis.confirmacion || esConfirmacionSimple(mensaje)) {
+            return (
+                'Perfecto. ¿Ese capital sería en efectivo o tenés un vehículo para entregar?'
+            );
+        }
+
+        return null;
+    }
+
+
+    // --------------------------------------------------------
+    // ADQUISICIÓN DIRECTA: DATOS DEL VEHÍCULO
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'datos_vehiculo_directa'
+    ) {
+        cliente.capitalDirectaDetalle = mensaje;
+        cliente.derivacionSolicitada = true;
+        cliente.etapa = 'esperando_horario';
+        cliente.esperandoRespuesta = 'horario_contacto';
+        cliente.opcionesEsperadas = [];
+
+        return (
+            'Perfecto. Con esta información te derivo con Edgardo o con Orlando; ' +
+            'el que esté disponible se va a contactar primero con vos para mostrarte ' +
+            'las opciones que tenemos para ofrecerte. ¿Qué día y horario te queda cómodo?'
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // ADQUISICIÓN DIRECTA: CAPITAL EN EFECTIVO
+    // --------------------------------------------------------
+
+    if (
+        cliente.esperandoRespuesta ===
+        'monto_efectivo_directa'
+    ) {
+        cliente.capitalDirectaDetalle = mensaje;
+        cliente.derivacionSolicitada = true;
+        cliente.etapa = 'esperando_horario';
+        cliente.esperandoRespuesta = 'horario_contacto';
+        cliente.opcionesEsperadas = [];
+
+        return (
+            'Perfecto. Con esta información te derivo con Edgardo o con Orlando; ' +
+            'el que esté disponible se va a contactar primero con vos para mostrarte ' +
+            'las opciones que tenemos para ofrecerte. ¿Qué día y horario te queda cómodo?'
+        );
+    }
+
+
+    // --------------------------------------------------------
     // CALIFICACIÓN SUAVE: USO DEL VEHÍCULO
     // --------------------------------------------------------
 
@@ -2638,7 +2769,7 @@ async function procesarRespuestaEsperada(
             cliente.opcionesEsperadas = [];
 
             return (
-                `Perfecto. ¿Qué día y horario les queda cómodo para que los contacte ${seller.asesorDerivacion || 'Edgardo'}?`
+                'Perfecto. ¿Qué día y horario les queda cómodo? Edgardo u Orlando, el que esté disponible, se va a contactar primero con ustedes.'
             );
         }
 
@@ -2810,7 +2941,7 @@ async function procesarRespuestaEsperada(
 
 
             return (
-                `Perfecto. ¿Qué día y horario te queda cómodo para que te contacte ${seller.asesorDerivacion || 'Edgardo'}?`
+                'Perfecto. ¿Qué día y horario te queda cómodo? Edgardo u Orlando, el que esté disponible, se va a contactar primero con vos.'
             );
         }
 
@@ -2859,13 +2990,13 @@ async function procesarRespuestaEsperada(
 
 
             return (
-                `Perfecto. Queda registrado. ${seller.asesorDerivacion || 'Edgardo'} va a continuar con vos. Muchas gracias.`
+                'Perfecto. Queda registrado. Edgardo u Orlando, el que esté disponible, se va a contactar primero con vos. Muchas gracias.'
             );
         }
 
 
         return (
-            `Dale. Para coordinar con ${seller.asesorDerivacion || 'Edgardo'}, decime qué día o en qué horario te queda cómodo.`
+            'Dale. Para coordinar con Edgardo u Orlando, decime qué día o en qué horario te queda cómodo.'
         );
     }
 
@@ -3235,6 +3366,33 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // PRIORIDAD DE ESTADO: ADQUISICIÓN DIRECTA
+    // ========================================================
+    // Las respuestas sobre capital pertenecen a la rama DIRECTA y se
+    // resuelven antes del enrutador general. Así "efectivo" o un valor
+    // estimado no reinician la rama ni se confunden con otra consulta.
+
+    if (
+        cliente.esperandoRespuesta === 'capital_directa' ||
+        cliente.esperandoRespuesta === 'datos_vehiculo_directa' ||
+        cliente.esperandoRespuesta === 'monto_efectivo_directa'
+    ) {
+        const respuestaDirecta =
+            await procesarRespuestaEsperada(
+                mensaje,
+                cliente,
+                analisis,
+                vehiculo
+            );
+
+        if (respuestaDirecta) {
+            guardarHistorial(cliente, 'martin', respuestaDirecta);
+            return respuestaDirecta;
+        }
+    }
+
+
+    // ========================================================
     // PRIORIDAD ABSOLUTA:
     // PREGUNTAS COMERCIALES EXPLÍCITAS
     // ========================================================
@@ -3593,8 +3751,11 @@ async function procesarMensaje(
             'directa';
 
 
+        cliente.capitalDirectaTipo = null;
+        cliente.capitalDirectaDetalle = null;
+
         cliente.esperandoRespuesta =
-            'aceptar_derivacion';
+            'capital_directa';
 
 
         let respuesta =
@@ -3615,7 +3776,7 @@ async function procesarMensaje(
 
 
         respuesta +=
-            ` Si querés avanzar con una propuesta, te puedo poner en contacto con ${seller.asesorDerivacion || 'Edgardo'}.`;
+            ' Para orientarte mejor, ¿contás con algún capital para la operación, ya sea efectivo o un vehículo?';
 
 
         guardarHistorial(
@@ -3680,7 +3841,7 @@ async function procesarMensaje(
 
 
         const respuesta =
-            `Perfecto. ¿Qué día y horario te queda cómodo para que te contacte ${seller.asesorDerivacion || 'Edgardo'}?`;
+            'Perfecto. ¿Qué día y horario te queda cómodo? Edgardo u Orlando, el que esté disponible, se va a contactar primero con vos.';
 
 
         guardarHistorial(
