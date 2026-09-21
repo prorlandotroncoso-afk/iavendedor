@@ -420,6 +420,11 @@ function getCliente(userId) {
 
             opcionesEsperadas: [],
 
+            // Variantes de un mismo modelo pendientes de elección.
+            // Se completa dinámicamente desde VEHICULOS cuando una consulta
+            // coincide con más de una versión (por ejemplo MT / AT).
+            variantesPendientes: [],
+
             derivacionSolicitada: false,
 
             horarioContacto: null,
@@ -1034,61 +1039,274 @@ function tieneReferenciaTemporal(mensaje) {
 // 6. DETECCIÓN DIRECTA DE MODELO
 // ============================================================
 
-async function detectarModeloDirecto(mensaje) {
+function patronTokenVehiculo(token) {
 
-    const modelos =
-        await listarModelosDisponibles();
-
-
-    const texto =
-        normalizar(mensaje);
+    return new RegExp(
+        `(^|[^a-z0-9])${String(token || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`
+    );
+}
 
 
-    for (const vehiculo of modelos) {
+function descripcionTransmisionVehiculo(vehiculo) {
 
-        const key =
-            normalizar(
-                vehiculo.key
-            );
+    const key = normalizar(vehiculo?.key || '');
+    const modelo = normalizar(vehiculo?.modelo || '');
+    const texto = `${key} ${modelo}`;
+
+    if (
+        /(^|[^a-z0-9])at([^a-z0-9]|$)/.test(texto) ||
+        texto.includes('automatico') ||
+        texto.includes('automatica')
+    ) {
+        return {
+            codigo: 'AT',
+            nombre: 'automático'
+        };
+    }
+
+    if (
+        /(^|[^a-z0-9])mt([^a-z0-9]|$)/.test(texto) ||
+        texto.includes('manual')
+    ) {
+        return {
+            codigo: 'MT',
+            nombre: 'manual'
+        };
+    }
+
+    return null;
+}
 
 
-        const modeloCompleto =
-            normalizar(
-                vehiculo.modelo || ''
-            );
+function etiquetaVersionVehiculo(vehiculo) {
+
+    const transmision =
+        descripcionTransmisionVehiculo(vehiculo);
+
+    if (transmision) {
+        return transmision.nombre;
+    }
+
+    const modelo =
+        String(vehiculo?.modelo || vehiculo?.key || '')
+            .trim();
+
+    return modelo || 'otra versión';
+}
 
 
-        // Los anuncios suelen mencionar una versión corta del modelo
-        // (por ejemplo "C3" o "2008") aunque en Sheets figure
-        // "Citroën C3 Feel Look". Detectamos tokens distintivos con
-        // números sin depender de una lista fija por vehículo.
-        const tokensDistintivos =
-            modeloCompleto
-                .split(/\s+/)
-                .filter(token => /\d/.test(token));
+function nombreFamiliaVehiculos(vehiculos = []) {
 
-        const coincideTokenDistintivo =
-            tokensDistintivos.some(token => {
-                const patron = new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
-                return patron.test(texto);
-            });
+    if (!Array.isArray(vehiculos) || vehiculos.length === 0) {
+        return 'este modelo';
+    }
 
+    const modelos = vehiculos
+        .map(v => String(v?.modelo || '').trim())
+        .filter(Boolean);
 
-        if (
-            texto.includes(key) ||
-            (
-                modeloCompleto &&
-                texto.includes(modeloCompleto)
-            ) ||
-            coincideTokenDistintivo
-        ) {
+    if (modelos.length === 0) {
+        return String(vehiculos[0]?.key || 'este modelo').toUpperCase();
+    }
 
-            return vehiculo.key;
+    const tokenizados = modelos.map(modelo => modelo.split(/\s+/));
+    const limite = Math.min(...tokenizados.map(tokens => tokens.length));
+    const comunes = [];
+
+    for (let i = 0; i < limite; i++) {
+        const base = normalizar(tokenizados[0][i]);
+        if (tokenizados.every(tokens => normalizar(tokens[i]) === base)) {
+            comunes.push(tokenizados[0][i]);
+        } else {
+            break;
         }
     }
 
+    // Marca + modelo suele ser suficiente: "Peugeot 208", "Citroën C3", etc.
+    if (comunes.length >= 2) {
+        return comunes.slice(0, 2).join(' ');
+    }
 
-    return null;
+    return comunes.join(' ') || modelos[0];
+}
+
+
+function respuestaElegirVersion(vehiculos = []) {
+
+    const familia = nombreFamiliaVehiculos(vehiculos);
+    const etiquetas = vehiculos.map(etiquetaVersionVehiculo);
+    const unicas = [...new Set(etiquetas)];
+
+    let opciones;
+
+    if (unicas.length === vehiculos.length) {
+        opciones = unicas;
+    } else {
+        // Si dos variantes comparten la misma transmisión, mostramos el nombre
+        // comercial para no ocultar una segunda diferencia relevante.
+        opciones = vehiculos.map(v => String(v?.modelo || v?.key || '').trim());
+    }
+
+    const textoOpciones =
+        opciones.length === 1
+            ? opciones[0]
+            : opciones.length === 2
+                ? `${opciones[0]} y ${opciones[1]}`
+                : `${opciones.slice(0, -1).join(', ')} y ${opciones[opciones.length - 1]}`;
+
+    return `Tengo ${vehiculos.length} versiones del ${familia}: ${textoOpciones}. ¿Cuál te interesa?`;
+}
+
+
+function coincideVehiculoConTexto(vehiculo, textoNormalizado) {
+
+    const key = normalizar(vehiculo?.key || '');
+    const modeloCompleto = normalizar(vehiculo?.modelo || '');
+
+    if (key && textoNormalizado.includes(key)) {
+        return true;
+    }
+
+    if (modeloCompleto && textoNormalizado.includes(modeloCompleto)) {
+        return true;
+    }
+
+    const tokensDistintivos = modeloCompleto
+        .split(/\s+/)
+        .filter(token => /\d/.test(token));
+
+    return tokensDistintivos.some(token =>
+        patronTokenVehiculo(token).test(textoNormalizado)
+    );
+}
+
+
+function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
+
+    const texto = normalizar(mensaje);
+    if (!texto || !Array.isArray(vehiculos)) return [];
+
+    const porTransmision = vehiculos.filter(vehiculo => {
+        const transmision = descripcionTransmisionVehiculo(vehiculo);
+        if (!transmision) return false;
+
+        if (transmision.codigo === 'AT') {
+            return (
+                patronTokenVehiculo('at').test(texto) ||
+                texto.includes('automatico') ||
+                texto.includes('automatica')
+            );
+        }
+
+        return (
+            patronTokenVehiculo('mt').test(texto) ||
+            texto.includes('manual')
+        );
+    });
+
+    if (porTransmision.length > 0) {
+        return porTransmision;
+    }
+
+    const porClaveOModelo = vehiculos.filter(vehiculo => {
+        const key = normalizar(vehiculo?.key || '');
+        const modelo = normalizar(vehiculo?.modelo || '');
+
+        return (
+            (key && texto.includes(key)) ||
+            (modelo && texto.includes(modelo))
+        );
+    });
+
+    if (porClaveOModelo.length > 0) {
+        return porClaveOModelo;
+    }
+
+    // Como última precisión, buscamos palabras propias de una variante
+    // (por ejemplo "GT", "Allure", etc.) sin hardcodear modelos.
+    return vehiculos.filter(vehiculo => {
+        const palabras = normalizar(vehiculo?.modelo || '')
+            .split(/\s+/)
+            .filter(p => p.length >= 2);
+
+        return palabras.some(p => patronTokenVehiculo(p).test(texto));
+    });
+}
+
+
+async function detectarModelosDirectos(mensaje) {
+
+    const modelos = await listarModelosDisponibles();
+    const texto = normalizar(mensaje);
+
+    const coincidenciasBase = modelos.filter(vehiculo =>
+        coincideVehiculoConTexto(vehiculo, texto)
+    );
+
+    if (coincidenciasBase.length <= 1) {
+        return coincidenciasBase;
+    }
+
+    const precisadas =
+        filtrarVariantesPorDetalle(mensaje, coincidenciasBase);
+
+    return precisadas.length > 0
+        ? precisadas
+        : coincidenciasBase;
+}
+
+
+async function detectarModeloDirecto(mensaje) {
+
+    const coincidencias =
+        await detectarModelosDirectos(mensaje);
+
+    return coincidencias.length === 1
+        ? coincidencias[0].key
+        : null;
+}
+
+
+function responderInfoVersionSeleccionada(vehiculo) {
+
+    const datos = [];
+
+    if (vehiculo.plan) {
+        datos.push(`tiene un plan ${vehiculo.plan}`);
+    }
+
+    if (vehiculo.plazo) {
+        datos.push(`a ${vehiculo.plazo} cuotas`);
+    }
+
+    if (vehiculo.precioLista) {
+        datos.push(`el precio de lista es de ${formatearPesos(vehiculo.precioLista)}`);
+    }
+
+    const cuotaIngreso =
+        vehiculo.cuota_1 ||
+        vehiculo.cuota1 ||
+        null;
+
+    if (cuotaIngreso) {
+        datos.push(`la cuota 1 es de ${formatearPesos(cuotaIngreso)}`);
+    }
+
+    const transmision = descripcionTransmisionVehiculo(vehiculo);
+    const nombre = nombreVehiculo(vehiculo);
+    const nombreConAclaracion =
+        transmision && !normalizar(nombre).includes(normalizar(transmision.nombre))
+            ? `${nombre} (${transmision.nombre})`
+            : nombre;
+
+    const detalle = datos.length > 0
+        ? ` ${datos.join(', ')}.`
+        : '.';
+
+    return (
+        `Bien, el ${nombreConAclaracion}${detalle} ` +
+        '¿Querés que te cuente cómo funciona la financiación o preferís información para adquisición directa?'
+    );
 }
 
 
@@ -3065,6 +3283,62 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // ELECCIÓN DE VARIANTE PENDIENTE
+    // ========================================================
+    // Si una consulta anterior coincidió con varias versiones, filtramos
+    // únicamente esas opciones hasta identificar una sola. Nunca elegimos
+    // arbitrariamente la primera fila de VEHICULOS.
+
+    if (
+        cliente.esperandoRespuesta === 'version_vehiculo' &&
+        Array.isArray(cliente.variantesPendientes) &&
+        cliente.variantesPendientes.length > 0
+    ) {
+        const modelosDisponibles =
+            await listarModelosDisponibles();
+
+        const pendientes = modelosDisponibles.filter(v =>
+            cliente.variantesPendientes.includes(v.key)
+        );
+
+        const filtradas =
+            filtrarVariantesPorDetalle(mensaje, pendientes);
+
+        if (filtradas.length === 1) {
+            const elegida = filtradas[0];
+
+            cliente.modelo = elegida.key;
+            cliente.variantesPendientes = [];
+            cliente.etapa = 'esperando_metodo';
+            cliente.esperandoRespuesta = 'metodo_compra';
+            cliente.opcionesEsperadas = ['directa', 'financiacion'];
+
+            const respuesta =
+                responderInfoVersionSeleccionada(elegida);
+
+            guardarHistorial(cliente, 'martin', respuesta);
+            return respuesta;
+        }
+
+        if (filtradas.length > 1) {
+            cliente.variantesPendientes = filtradas.map(v => v.key);
+            cliente.opcionesEsperadas = cliente.variantesPendientes;
+
+            const respuesta = respuestaElegirVersion(filtradas);
+            guardarHistorial(cliente, 'martin', respuesta);
+            return respuesta;
+        }
+
+        const respuesta =
+            'No llegué a identificar cuál de esas versiones querés. ' +
+            respuestaElegirVersion(pendientes);
+
+        guardarHistorial(cliente, 'martin', respuesta);
+        return respuesta;
+    }
+
+
+    // ========================================================
     // RUTA RÁPIDA: ENTRADA DESDE PUBLICIDAD / CONSULTA GENERAL
     // ========================================================
     // Los mensajes típicos de anuncios no necesitan pasar primero
@@ -3074,8 +3348,13 @@ async function procesarMensaje(
     // "me interesa el 2008", "vi el anuncio del C3".
     // ========================================================
 
+    const modelosDirectosIniciales =
+        await detectarModelosDirectos(mensaje);
+
     const modeloDirectoInicial =
-        await detectarModeloDirecto(mensaje);
+        modelosDirectosIniciales.length === 1
+            ? modelosDirectosIniciales[0].key
+            : null;
 
     const textoInicialNormalizado =
         normalizar(mensaje);
@@ -3104,11 +3383,38 @@ async function procesarMensaje(
         );
 
     if (
+        modelosDirectosIniciales.length > 1 &&
+        expresaInteresGeneralInicial &&
+        !pideDatoEspecificoInicial
+    ) {
+        cliente.modelo = null;
+        cliente.etapa = 'esperando_version';
+        cliente.esperandoRespuesta = 'version_vehiculo';
+        cliente.variantesPendientes =
+            modelosDirectosIniciales.map(v => v.key);
+        cliente.opcionesEsperadas =
+            [...cliente.variantesPendientes];
+
+        const respuesta =
+            respuestaElegirVersion(modelosDirectosIniciales);
+
+        console.log(
+            '🚗 Variantes detectadas:',
+            cliente.variantesPendientes
+        );
+
+        guardarHistorial(cliente, 'martin', respuesta);
+        return respuesta;
+    }
+
+
+    if (
         modeloDirectoInicial &&
         expresaInteresGeneralInicial &&
         !pideDatoEspecificoInicial
     ) {
         cliente.modelo = modeloDirectoInicial;
+        cliente.variantesPendientes = [];
 
         // Una nueva entrada explícita desde publicidad inicia un recorrido comercial
         // fresco para ese vehículo. Conservamos la memoria general, pero no arrastramos
