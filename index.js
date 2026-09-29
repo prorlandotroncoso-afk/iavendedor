@@ -4809,7 +4809,13 @@ app.post(
                 modo: resultado.modo,
                 responder: resultado.responder,
                 reply: resultado.reply,
-                respuesta: resultado.reply
+                respuesta: resultado.reply,
+
+                // Compatibilidad con los JSON Path configurados actualmente
+                // en ManyChat: $.RESPUESTA -> MARTIN_RESPUESTA
+                // y $.MODO -> MARTIN_MODO. JSON Path distingue mayúsculas.
+                RESPUESTA: resultado.reply,
+                MODO: resultado.modo
             });
         } catch (error) {
             console.error('❌ Error procesando /manychat:', error);
