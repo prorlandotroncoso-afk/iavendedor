@@ -3621,18 +3621,12 @@ async function procesarMensaje(
     // SALUDO
     // ========================================================
 
-    const intencionesNoSaludo =
-        analisis.intenciones.filter(
-            i =>
-                i !== 'saludo'
-        );
-
-
+    // Un saludo solo debe interceptar la conversación cuando el mensaje
+    // COMPLETO es realmente un saludo puro ("hola", "buenas", etc.).
+    // Si el cliente dice "Hola, quiero cambiar el auto", el saludo es
+    // accesorio y la consulta debe continuar hacia el cerebro comercial.
     if (
-        analisis.intenciones.includes(
-            'saludo'
-        ) &&
-        intencionesNoSaludo.length === 0 &&
+        esSaludo(mensaje) &&
         !analisis.modelo
     ) {
 
