@@ -2012,9 +2012,13 @@ function responderInfoInicial(vehiculo) {
             ? `Te cuento: el ${nombreVehiculo(vehiculo)} ${datos.join(', ')}.`
             : `Claro. Tengo información del ${nombreVehiculo(vehiculo)}.`;
 
+    const ingresoSimple = cuotaIngreso
+        ? ' Podés arrancar solo con el DNI.'
+        : '';
+
     return (
-        `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion} ` +
-        '¿Querés que te cuente cómo funciona la financiación o preferís información para adquisición directa?'
+        `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion}${ingresoSimple}\n\n` +
+        '¿Querés que te cuente cómo funciona la financiación?'
     );
 }
 
@@ -2565,6 +2569,10 @@ async function respuestaSeguraIA(
                 2
             );
 
+        const historialReciente = (cliente.historial || [])
+            .slice(-12)
+            .map(h => `${h.rol}: ${h.mensaje}`)
+            .join('\n');
 
         const prompt = `
 ${seller.prompt}
@@ -2576,6 +2584,10 @@ ${nombreVehiculo(vehiculo)}
 DATOS COMERCIALES PERMITIDOS:
 
 ${datosPermitidos}
+
+HISTORIAL RECIENTE:
+
+${historialReciente || 'Sin historial previo'}
 
 PREGUNTA DEL CLIENTE:
 
@@ -2599,7 +2611,7 @@ REGLAS:
 "según la base".
 
 6. Si falta información:
-"No tengo esa información disponible en este momento. Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}."
+"Ese dato puntual no lo tengo confirmado. Si querés, te lo pueden confirmar Edgardo u Orlando."
 
 7. Usá español argentino rioplatense profesional y voseo natural: vos, querés, podés, tenés, decime, contame.
 
@@ -2613,9 +2625,9 @@ REGLAS:
 
 12. Máximo 3 oraciones.
 
-13. No vendas ni negocies.
+13. Desenvolvete como asesor comercial: comprendé la intención, respondé la duda y, si corresponde, hacé UNA pregunta útil para continuar la conversación. Podés manejar objeciones y orientar, pero nunca inventes hechos comerciales ni negocies condiciones no proporcionadas.
 
-14. No repitas información innecesaria.
+14. No repitas información innecesaria ni vuelvas a preguntar algo que ya figure claramente en el historial.
 
 15. Si informás un monto en pesos, usá formato argentino con signo $ y separadores de miles.
 
@@ -2700,8 +2712,95 @@ Respondé directamente.
 
         return (
             'No tengo esa información disponible en este momento. ' +
-            `Si querés, te la puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
+            'Si querés, te lo pueden confirmar Edgardo u Orlando.'
         );
+    }
+}
+
+
+// ============================================================
+// 10.B ORIENTACIÓN COMERCIAL SIN MODELO DEFINIDO
+// ============================================================
+
+async function responderConsultaAbiertaIA(mensaje, cliente) {
+    try {
+        const vehiculos = await listarModelosDisponibles();
+
+        // El catálogo se entrega como referencia autorizada, pero Martín no debe
+        // recitarlo. Sirve para saber qué existe si la conversación ya permite
+        // orientar al cliente.
+        const catalogoPermitido = vehiculos.map(v => ({
+            key: v.key,
+            marca: v.marca || null,
+            modelo: v.modelo || null,
+            plan: v.plan || null,
+            plazo: v.plazo || null,
+            cuota1: v.cuota_1 || v.cuota1 || null,
+            precioLista: v.precioLista || v.precio_lista || null
+        }));
+
+        const historialReciente = (cliente.historial || [])
+            .slice(-12)
+            .map(h => `${h.rol}: ${h.mensaje}`)
+            .join('\n');
+
+        const prompt = `
+${seller.prompt}
+
+El cliente todavía NO tiene un vehículo identificado de manera inequívoca.
+
+CATÁLOGO COMERCIAL AUTORIZADO (solo referencia; NO lo enumeres completo):
+${JSON.stringify(catalogoPermitido, null, 2)}
+
+HISTORIAL RECIENTE:
+${historialReciente || 'Sin historial previo'}
+
+MENSAJE ACTUAL:
+"${mensaje}"
+
+INSTRUCCIONES PARA ESTA RESPUESTA:
+
+1. Comprendé qué busca realmente el cliente antes de ofrecer vehículos.
+2. Si la consulta es abierta (por ejemplo "quiero cambiar el auto" o "qué tienen"), NO enumeres el catálogo. Hacé la pregunta comercial más útil según lo que todavía falte saber.
+3. Aprovechá cualquier dato que el cliente ya haya dado: uso, presupuesto/cuota, vehículo usado, familia, trabajo, preferencias u objeciones. NO lo preguntes de nuevo.
+4. Si ya dio suficiente información para orientar, podés mencionar como máximo 2 alternativas REALES del catálogo autorizado. No inventes versiones ni datos.
+5. No afirmes precios, cuotas, planes ni condiciones que no aparezcan exactamente en el catálogo autorizado.
+6. Si para recomendar responsablemente falta un dato, preguntalo antes de recomendar.
+7. Una pregunta útil por vez. No hagas un interrogatorio.
+8. Voseo argentino natural. Tono cálido, profesional y breve.
+9. No uses "che".
+10. No digas "base de datos", "sistema" ni "tengo cargado".
+11. Máximo 4 oraciones breves.
+
+Respondé directamente al cliente.
+`;
+
+        const response = await groq.chat.completions.create({
+            model: GROQ_MODEL,
+            reasoning_effort: 'none',
+            reasoning_format: 'hidden',
+            messages: [
+                { role: 'system', content: prompt },
+                { role: 'user', content: mensaje }
+            ],
+            temperature: 0.25,
+            max_tokens: 220
+        });
+
+        let respuesta = normalizarEstiloMartin(
+            String(response.choices?.[0]?.message?.content || '')
+                .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                .trim()
+        );
+
+        if (!respuesta || /<think>/i.test(respuesta)) {
+            throw new Error('Respuesta abierta vacía o inválida');
+        }
+
+        return respuesta;
+    } catch (error) {
+        console.error('⚠️ Error orientación comercial:', error.message);
+        return 'Claro. Contame un poquito qué estás buscando: ¿lo usarías más para trabajar o para uso personal?';
     }
 }
 
@@ -3309,9 +3408,9 @@ async function procesarMensaje(
 
             cliente.modelo = elegida.key;
             cliente.variantesPendientes = [];
-            cliente.etapa = 'esperando_metodo';
-            cliente.esperandoRespuesta = 'metodo_compra';
-            cliente.opcionesEsperadas = ['directa', 'financiacion'];
+            cliente.etapa = 'vehiculo_identificado';
+            cliente.esperandoRespuesta = null;
+            cliente.opcionesEsperadas = [];
 
             const respuesta =
                 responderInfoVersionSeleccionada(elegida);
@@ -3568,37 +3667,28 @@ async function procesarMensaje(
         !cliente.modelo
     ) {
 
-        const modelos =
-            await listarModelosDisponibles();
-
-
-        const nombres =
-            modelos.map(
-                v =>
-                    v.key.toUpperCase()
+        const respuesta =
+            await responderConsultaAbiertaIA(
+                mensaje,
+                cliente
             );
 
-
-        const respuesta =
-            nombres.length > 0
-                ? `Claro. ¿Qué modelo te interesa? Tengo información de ${nombres.join(', ')}.`
-                : 'Decime qué modelo te interesa y te ayudo.';
-
-
         cliente.etapa =
-            'esperando_modelo';
+            'indagacion_comercial';
 
-
+        // No fijamos una respuesta rígida esperada: el nuevo cerebro puede
+        // comprender la siguiente respuesta dentro del contexto completo.
         cliente.esperandoRespuesta =
-            'modelo';
+            null;
 
+        cliente.opcionesEsperadas =
+            [];
 
         guardarHistorial(
             cliente,
             'martin',
             respuesta
         );
-
 
         return respuesta;
     }
@@ -3665,12 +3755,9 @@ async function procesarMensaje(
         analisis.modelo &&
         !tieneConsultaComercialEspecifica
     ) {
-        cliente.etapa = 'esperando_metodo';
-        cliente.esperandoRespuesta = 'metodo_compra';
-        cliente.opcionesEsperadas = [
-            'directa',
-            'financiacion'
-        ];
+        cliente.etapa = 'vehiculo_identificado';
+        cliente.esperandoRespuesta = null;
+        cliente.opcionesEsperadas = [];
 
         const respuesta = responderInfoInicial(vehiculo);
 
@@ -4198,7 +4285,7 @@ async function procesarMensaje(
 
 
         const respuesta =
-            'Dale, no hay problema. Si más adelante necesitás información, escribime.';
+            'Dale, no hay problema. Quedo a disposición para lo que necesites.';
 
 
         guardarHistorial(
