@@ -1616,6 +1616,57 @@ async function interpretarMensaje(
         );
 
 
+    // ========================================================
+    // RUTA LOCAL SEGURA PARA INTENCIONES COMERCIALES EXPLÍCITAS
+    // ========================================================
+    // Esta optimización NO genera respuestas comerciales ni reemplaza
+    // la conversación libre de Qwen. Solo evita pedirle a la IA que
+    // vuelva a clasificar mensajes cuyo significado comercial ya quedó
+    // inequívocamente identificado por reglas locales. Los datos concretos
+    // (precios, cuotas, requisitos, etc.) siguen saliendo de Google Sheets.
+    // Mensajes contextuales, ambiguos, confirmaciones, negaciones y lenguaje
+    // no cubierto por estas reglas continúan pasando por Qwen.
+
+    const intencionesLocalesSeguras = new Set([
+        'financiacion',
+        'directa',
+        'cuotas',
+        'requisitos',
+        'precio',
+        'gastos_entrega',
+        'equipamiento',
+        'material'
+    ]);
+
+    const tieneIntencionComercialExplicita =
+        respaldo.intenciones.some(
+            intencion => intencionesLocalesSeguras.has(intencion)
+        );
+
+    const requiereContextoConversacional =
+        respaldo.confirmacion === true ||
+        respaldo.negacion === true;
+
+    if (
+        tieneIntencionComercialExplicita &&
+        !requiereContextoConversacional
+    ) {
+        console.log(
+            '⚡ Clasificación local segura:',
+            JSON.stringify({
+                modelo: respaldo.modelo || null,
+                intenciones: respaldo.intenciones
+            })
+        );
+
+        return {
+            ...respaldo,
+            ambigua: false,
+            aclaracion: null
+        };
+    }
+
+
     try {
 
         const modelos =
