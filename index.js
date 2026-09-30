@@ -3438,6 +3438,40 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // OPTIMIZACIÓN 1: RUTA RÁPIDA PARA SALUDO PURO
+    // ========================================================
+    // Un saludo puro no necesita consultar modelos, Google Sheets ni Qwen.
+    // Se ubica después de la resolución de una variante pendiente para no
+    // alterar el comportamiento de una conversación que ya estaba esperando
+    // que el cliente eligiera una versión concreta.
+
+    if (
+        esSaludo(mensaje)
+    ) {
+        cliente.etapa =
+            'esperando_modelo';
+
+        cliente.esperandoRespuesta =
+            'modelo';
+
+        const respuesta =
+            'Hola, ¿en qué te puedo ayudar?';
+
+        console.log(
+            '⚡ Ruta rápida local: saludo puro'
+        );
+
+        guardarHistorial(
+            cliente,
+            'martin',
+            respuesta
+        );
+
+        return respuesta;
+    }
+
+
+    // ========================================================
     // RUTA RÁPIDA: ENTRADA DESDE PUBLICIDAD / CONSULTA GENERAL
     // ========================================================
     // Los mensajes típicos de anuncios no necesitan pasar primero
