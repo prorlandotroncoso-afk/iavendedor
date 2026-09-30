@@ -1616,6 +1616,31 @@ async function interpretarMensaje(
         );
 
 
+    // ========================================================
+    // V5.1 - RUTA LOCAL RÁPIDA
+    // ========================================================
+    // Si el mensaje ya quedó inequívocamente clasificado por reglas locales,
+    // no hacemos una llamada a Qwen solo para confirmar lo que ya sabemos.
+    // Esto evita sumar una llamada de IA antes de responder cuotas, precio,
+    // financiación, requisitos, etc. Qwen sigue interviniendo cuando el texto
+    // depende del contexto o no puede resolverse con seguridad localmente.
+    const intencionesLocalesClaras = (respaldo.intenciones || []).filter(
+        i => i !== 'saludo' && i !== 'otro'
+    );
+
+    if (
+        respaldo.modelo ||
+        intencionesLocalesClaras.length > 0 ||
+        esSaludo(mensaje)
+    ) {
+        return {
+            ...respaldo,
+            ambigua: false,
+            aclaracion: null
+        };
+    }
+
+
     try {
 
         const modelos =
@@ -1783,6 +1808,7 @@ FORMATO EXACTO:
 `;
 
 
+        const inicioQwenClasificacion = Date.now();
         const response =
             await groq.chat.completions.create({
 
@@ -1810,6 +1836,8 @@ FORMATO EXACTO:
 
                 max_tokens: 180
             });
+
+        console.log(`⏱️ Qwen clasificación: ${Date.now() - inicioQwenClasificacion} ms`);
 
 
         const contenido =
@@ -2775,6 +2803,7 @@ INSTRUCCIONES PARA ESTA RESPUESTA:
 Respondé directamente al cliente.
 `;
 
+        const inicioQwenAbierta = Date.now();
         const response = await groq.chat.completions.create({
             model: GROQ_MODEL,
             reasoning_effort: 'none',
@@ -2786,6 +2815,8 @@ Respondé directamente al cliente.
             temperature: 0.25,
             max_tokens: 220
         });
+
+        console.log(`⏱️ Qwen orientación abierta: ${Date.now() - inicioQwenAbierta} ms`);
 
         let respuesta = normalizarEstiloMartin(
             String(response.choices?.[0]?.message?.content || '')
@@ -3382,6 +3413,23 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // V5.1 - SALUDO PURO SIN IA
+    // ========================================================
+    // Un saludo puro no necesita catálogo, memoria semántica ni Qwen.
+    // Responderlo acá reduce latencia y evita consumir una llamada de IA.
+    if (esSaludo(mensaje)) {
+        cliente.etapa = 'esperando_modelo';
+        cliente.esperandoRespuesta = 'modelo';
+        cliente.opcionesEsperadas = [];
+
+        const respuesta = 'Hola, ¿en qué te puedo ayudar?';
+        guardarHistorial(cliente, 'martin', respuesta);
+        console.log('⚡ Ruta rápida local: saludo puro');
+        return respuesta;
+    }
+
+
+    // ========================================================
     // ELECCIÓN DE VARIANTE PENDIENTE
     // ========================================================
     // Si una consulta anterior coincidió con varias versiones, filtramos
@@ -3457,6 +3505,53 @@ async function procesarMensaje(
 
     const textoInicialNormalizado =
         normalizar(mensaje);
+
+
+    // ========================================================
+    // V5.1 - CAMBIO DE VEHÍCULO USADO SIN MODELO 0 KM DEFINIDO
+    // ========================================================
+    // Frases como "Tengo un Gol 2018 y quiero cambiarlo" describen el auto
+    // actual del cliente, no un modelo 0 km del catálogo. No necesitamos usar
+    // Qwen primero para clasificar y después otra vez para redactar.
+    // Si no hay un modelo SURFRANCE identificado y la intención de cambio es
+    // explícita, hacemos una sola pregunta comercial útil de forma inmediata.
+    const expresaCambioVehiculoPropio =
+        contieneAlguna(
+            textoInicialNormalizado,
+            [
+                'quiero cambiarlo',
+                'quiero cambiarla',
+                'quiero cambiar mi auto',
+                'quiero cambiar mi vehiculo',
+                'quiero cambiar el auto',
+                'quiero cambiar el vehiculo',
+                'quiero cambiar de auto',
+                'quiero cambiar de vehiculo',
+                'quiero entregar mi auto',
+                'quiero entregar mi vehiculo',
+                'tengo un auto y quiero cambiar',
+                'tengo una camioneta y quiero cambiar'
+            ]
+        );
+
+    if (
+        !modeloDirectoInicial &&
+        modelosDirectosIniciales.length === 0 &&
+        expresaCambioVehiculoPropio
+    ) {
+        cliente.modelo = null;
+        cliente.etapa = 'indagacion_comercial';
+        cliente.esperandoRespuesta = null;
+        cliente.opcionesEsperadas = [];
+
+        const respuesta =
+            'Entiendo. Para orientarte mejor con el cambio, ¿para qué uso principal necesitás el nuevo auto?';
+
+        guardarHistorial(cliente, 'martin', respuesta);
+        console.log('⚡ Ruta rápida local: cambio de vehículo usado');
+        return respuesta;
+    }
+
 
     const pideDatoEspecificoInicial =
         contieneAlguna(
