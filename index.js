@@ -1662,7 +1662,8 @@ async function interpretarMensaje(
         return {
             ...respaldo,
             ambigua: false,
-            aclaracion: null
+            aclaracion: null,
+            indagacion: null
         };
     }
 
@@ -1692,10 +1693,16 @@ async function interpretarMensaje(
         const prompt = `
 ${seller.prompt}
 
-Tu única tarea es CLASIFICAR el mensaje del cliente.
+Tu tarea principal es CLASIFICAR el mensaje del cliente.
 
-NO respondas al cliente.
-NO inventes información comercial.
+Además, SOLO cuando todavía NO haya un modelo objetivo identificado y la conversación requiera indagar para entender qué vehículo podría convenirle, podés completar el campo "indagacion" con UNA respuesta breve y natural para continuar la charla.
+
+BARRERA COMERCIAL ABSOLUTA:
+- "indagacion" sirve únicamente para conversar, comprender necesidad, uso, presupuesto general, preferencias u objeciones.
+- En "indagacion" NO podés mencionar ni afirmar precios, cuotas, cantidad de cuotas, porcentajes, anticipos, planes, bonificaciones, gastos, requisitos, equipamiento, disponibilidad, condiciones de entrega ni ninguna otra información comercial concreta.
+- Esos datos SOLO pueden salir después del Google Sheet mediante las funciones comerciales del servidor.
+- Si el cliente pregunta un dato comercial y todavía no hay modelo objetivo, indagá lo mínimo necesario para identificarlo; NO respondas el dato de memoria ni por conocimiento general.
+- No inventes información comercial.
 
 Devolvé ÚNICAMENTE JSON válido.
 
@@ -1784,6 +1791,10 @@ En esos casos NO agregues la intención "material".
 17. Usá "material" SOLAMENTE cuando el cliente pida explícitamente un PDF, ficha técnica,
 folleto, pauta, catálogo, archivo, documento o material comercial.
 
+18. Si completás "indagacion", debe sonar como un asesor humano: reconocé brevemente lo que el cliente dijo y hacé UNA sola pregunta útil. No hagas interrogatorios ni repitas datos que ya dio.
+
+19. "indagacion" NUNCA puede contener información comercial concreta. Su función es INDAGAR, no informar condiciones comerciales.
+
 CONTEXTO:
 
 Etapa:
@@ -1829,7 +1840,8 @@ FORMATO EXACTO:
   "confirmacion": false,
   "negacion": false,
   "ambigua": false,
-  "aclaracion": null
+  "aclaracion": null,
+  "indagacion": null
 }
 `;
 
@@ -2009,6 +2021,13 @@ FORMATO EXACTO:
                 typeof json.aclaracion === 'string' &&
                 json.aclaracion.trim()
                     ? json.aclaracion.trim().slice(0, 220)
+                    : null,
+
+            // Solo conversación/indagación. Nunca datos comerciales.
+            indagacion:
+                typeof json.indagacion === 'string' &&
+                json.indagacion.trim()
+                    ? json.indagacion.trim().slice(0, 320)
                     : null,
 
             referenciaTemporal:
@@ -3746,17 +3765,63 @@ async function procesarMensaje(
         !cliente.modelo
     ) {
 
-        const respuesta =
-            await responderConsultaAbiertaIA(
-                mensaje,
-                cliente
+        // ====================================================
+        // BARRERA COMERCIAL SIN MODELO + UNA SOLA LLAMADA IA
+        // ====================================================
+        // La interpretación de Qwen puede proponer una frase de INDAGACIÓN,
+        // pero nunca datos comerciales. Evitamos una segunda llamada a Qwen
+        // (antes responderConsultaAbiertaIA), que era el principal cuello de
+        // botella y podía generalizar condiciones comerciales del catálogo.
+        // Precios, cuotas, planes, porcentajes, requisitos, equipamiento y
+        // demás condiciones SOLO se responden después de identificar un modelo
+        // y leer su fila autorizada de Google Sheets.
+
+        const intencionesQueExigenModelo = new Set([
+            'financiacion',
+            'directa',
+            'cuotas',
+            'requisitos',
+            'precio',
+            'gastos_entrega',
+            'entrega',
+            'equipamiento',
+            'material'
+        ]);
+
+        const pideDatoComercialSinModelo =
+            (analisis.intenciones || []).some(
+                intencion => intencionesQueExigenModelo.has(intencion)
             );
+
+        let respuesta =
+            typeof analisis.indagacion === 'string'
+                ? normalizarEstiloMartin(analisis.indagacion.trim())
+                : '';
+
+        if (pideDatoComercialSinModelo) {
+            // No dejamos que una frase generada por IA responda condiciones
+            // comerciales sin vehículo identificado, aunque viniera presente.
+            respuesta = '';
+
+            if (!cliente.usoVehiculo) {
+                respuesta =
+                    'Claro. Las condiciones dependen del vehículo que terminemos viendo. ' +
+                    'Para orientarte bien sin pasarte datos que no correspondan, ¿lo usarías principalmente para trabajo, para la familia o para un poco de ambos?';
+            } else {
+                respuesta =
+                    'Claro. Para pasarte la información exacta primero necesito identificar qué modelo puede encajarte mejor. ' +
+                    '¿Hay algún tipo de auto o modelo que tengas en mente?';
+            }
+        }
+
+        if (!respuesta) {
+            respuesta =
+                'Entiendo. Para orientarte bien, ¿qué es lo más importante para vos en el próximo auto: el uso que le vas a dar, el espacio o mantener una cuota cómoda?';
+        }
 
         cliente.etapa =
             'indagacion_comercial';
 
-        // No fijamos una respuesta rígida esperada: el nuevo cerebro puede
-        // comprender la siguiente respuesta dentro del contexto completo.
         cliente.esperandoRespuesta =
             null;
 
