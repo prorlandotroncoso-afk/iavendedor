@@ -4883,6 +4883,25 @@ async function procesarEntradaManyChat(body = {}) {
 }
 
 
+// Endpoint temporal de diagnóstico ManyChat -> Render.
+// No usa Qwen, Sheets, memoria ni cola. Sirve para comprobar exclusivamente
+// que ManyChat puede recibir y mapear un JSON inmediato desde Render.
+app.post(
+    '/manychat-test',
+    (req, res) => {
+        const payload = {
+            RESPUESTA: 'PRUEBA MANYCHAT OK',
+            MODO: 'IA'
+        };
+
+        console.log('🧪 /manychat-test recibido');
+        console.log('📦 /manychat-test JSON saliente:', JSON.stringify(payload));
+
+        res.status(200).type('application/json').send(JSON.stringify(payload));
+    }
+);
+
+
 // Ruta anterior: queda disponible como rollback/diagnóstico.
 app.post(
     '/manychat',
