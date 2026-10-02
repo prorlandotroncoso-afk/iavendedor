@@ -51,6 +51,70 @@ const GROQ_MODEL =
 
 
 // ============================================================
+// PRESUPUESTO DE LATENCIA + CACHE DE CATÁLOGO
+// ============================================================
+// ManyChat necesita recibir la respuesta con margen. El objetivo operativo
+// es <= 9 s punta a punta; por eso la llamada de interpretación a Qwen tiene
+// un presupuesto acotado y existe un fallback conversacional seguro.
+// El catálogo usado SOLO para detectar nombres/versiones se cachea 60 s.
+// Los datos comerciales concretos siguen leyéndose por obtenerVehiculo() y
+// nunca se inventan desde la IA.
+
+const MAX_MS_INTERPRETACION_IA = 4200;
+const TTL_CATALOGO_MS = 60 * 1000;
+let cacheCatalogo = { cargadoEn: 0, datos: null, promesa: null };
+
+async function listarModelosCacheados() {
+    const ahora = Date.now();
+
+    if (
+        Array.isArray(cacheCatalogo.datos) &&
+        ahora - cacheCatalogo.cargadoEn < TTL_CATALOGO_MS
+    ) {
+        return cacheCatalogo.datos;
+    }
+
+    if (cacheCatalogo.promesa) {
+        return cacheCatalogo.promesa;
+    }
+
+    cacheCatalogo.promesa = Promise.resolve()
+        .then(() => listarModelosDisponibles())
+        .then(datos => {
+            cacheCatalogo.datos = Array.isArray(datos) ? datos : [];
+            cacheCatalogo.cargadoEn = Date.now();
+            return cacheCatalogo.datos;
+        })
+        .finally(() => {
+            cacheCatalogo.promesa = null;
+        });
+
+    return cacheCatalogo.promesa;
+}
+
+function conTimeout(promise, ms, etiqueta = 'operación') {
+    let timer;
+    const limite = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(`${etiqueta} excedió ${ms} ms`);
+            error.code = 'MARTIN_TIMEOUT';
+            reject(error);
+        }, ms);
+    });
+
+    return Promise.race([promise, limite])
+        .finally(() => clearTimeout(timer));
+}
+
+
+
+// Precarga asíncrona: evita que el primer cliente después de un deploy pague
+// el costo completo de cargar el catálogo. Nunca bloquea el arranque.
+listarModelosCacheados().catch(error => {
+    console.warn('⚠️ No se pudo precargar catálogo:', error.message);
+});
+
+// ============================================================
 // WHATSAPP CLOUD API - CONFIGURACIÓN
 // ============================================================
 //
@@ -1236,7 +1300,7 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
 
 async function detectarModelosDirectos(mensaje) {
 
-    const modelos = await listarModelosDisponibles();
+    const modelos = await listarModelosCacheados();
     const texto = normalizar(mensaje);
 
     const coincidenciasBase = modelos.filter(vehiculo =>
@@ -1671,7 +1735,7 @@ async function interpretarMensaje(
     try {
 
         const modelos =
-            await listarModelosDisponibles();
+            await listarModelosCacheados();
 
 
         const clavesModelos =
@@ -1847,7 +1911,8 @@ FORMATO EXACTO:
 
 
         const response =
-            await groq.chat.completions.create({
+            await conTimeout(
+                groq.chat.completions.create({
 
                 model:
                     GROQ_MODEL,
@@ -1871,8 +1936,11 @@ FORMATO EXACTO:
 
                 temperature: 0,
 
-                max_tokens: 180
-            });
+                max_tokens: 140
+                }),
+                MAX_MS_INTERPRETACION_IA,
+                'Interpretación Qwen'
+            );
 
 
         const contenido =
@@ -2794,7 +2862,7 @@ Respondé directamente.
 
 async function responderConsultaAbiertaIA(mensaje, cliente) {
     try {
-        const vehiculos = await listarModelosDisponibles();
+        const vehiculos = await listarModelosCacheados();
 
         // El catálogo se entrega como referencia autorizada, pero Martín no debe
         // recitarlo. Sirve para saber qué existe si la conversación ya permite
@@ -3464,7 +3532,7 @@ async function procesarMensaje(
         cliente.variantesPendientes.length > 0
     ) {
         const modelosDisponibles =
-            await listarModelosDisponibles();
+            await listarModelosCacheados();
 
         const pendientes = modelosDisponibles.filter(v =>
             cliente.variantesPendientes.includes(v.key)
