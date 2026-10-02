@@ -1298,6 +1298,47 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
 }
 
 
+// ============================================================
+// RUTA DIRECTA A SHEETS PARA MODELOS EXPLÍCITOS
+// ============================================================
+// Si el cliente escribe un modelo inequívoco como "C3", "2008" o
+// "208 manual", intentamos consultar directamente SU ficha en Sheets.
+// No hay datos comerciales locales ni cálculos: Sheets sigue siendo la
+// única fuente de verdad. Si no podemos resolver el código de forma segura,
+// cae al detector general existente (útil para variantes ambiguas).
+
+function candidatosCodigoModeloExplicito(mensaje) {
+    const texto = normalizar(mensaje);
+    const tokens = texto.match(/\b[a-z]*\d+[a-z0-9]*\b/g) || [];
+    const unicos = [...new Set(tokens.filter(t => t.length >= 2 && t.length <= 12))];
+
+    if (unicos.length !== 1) return [];
+
+    const base = unicos[0];
+    const manual = texto.includes('manual') || patronTokenVehiculo('mt').test(texto);
+    const automatico = texto.includes('automatico') || texto.includes('automatica') || patronTokenVehiculo('at').test(texto);
+
+    // Convención ya utilizada por Martín para variantes MT/AT. Se intenta
+    // primero la variante explícita y luego el código base.
+    if (manual) return [`${base}_mt`, base];
+    if (automatico) return [`${base}_at`, base];
+    return [base];
+}
+
+async function obtenerVehiculoDirectoDesdeMensaje(mensaje) {
+    const candidatos = candidatosCodigoModeloExplicito(mensaje);
+
+    for (const codigo of candidatos) {
+        const vehiculo = await obtenerVehiculo(codigo);
+        if (vehiculo) {
+            console.log(`⚡ Sheets directo: ${codigo}`);
+            return vehiculo;
+        }
+    }
+
+    return null;
+}
+
 async function detectarModelosDirectos(mensaje) {
 
     const modelos = await listarModelosCacheados();
@@ -2122,53 +2163,35 @@ FORMATO EXACTO:
 
 function responderInfoInicial(vehiculo) {
 
-    const datos = [];
+    const nombre = nombreVehiculo(vehiculo);
+    const cuotaIngreso = vehiculo.cuota_1 || vehiculo.cuota1 || null;
+    const requisitosTexto = String(vehiculo.requisitos || '').trim();
 
-    if (vehiculo.plan) {
-        datos.push(`tiene un plan ${vehiculo.plan}`);
-    }
-
-    if (vehiculo.plazo) {
-        datos.push(`a ${vehiculo.plazo} cuotas`);
-    }
-
-    if (vehiculo.precioLista) {
-        datos.push(`el precio de lista es de ${formatearPesos(vehiculo.precioLista)}`);
-    }
-
-    const cuotaIngreso =
-        vehiculo.cuota_1 ||
-        vehiculo.cuota1 ||
-        null;
+    const partes = [
+        `¡Hola! Perfecto. Te cuento sobre el ${nombre}.`
+    ];
 
     if (cuotaIngreso) {
-        datos.push(`la cuota 1 es de ${formatearPesos(cuotaIngreso)}`);
+        partes.push(
+            `Podés acceder mediante Financiamiento de Fábrica con una cuota inicial de ${formatearPesos(cuotaIngreso)}.`
+        );
+    } else {
+        partes.push('Tenemos una opción de Financiamiento de Fábrica para este modelo.');
     }
 
-    const introduccion =
-        datos.length > 0
-            ? `Te cuento: el ${nombreVehiculo(vehiculo)} ${datos.join(', ')}.`
-            : `Claro. Tengo información del ${nombreVehiculo(vehiculo)}.`;
+    // Los requisitos se mencionan únicamente si existen en Sheets.
+    if (requisitosTexto) {
+        partes.push(`Para ingresar, los requisitos informados son: ${requisitosTexto}.`);
+    }
 
-    // No inferimos requisitos a partir de la existencia de una cuota.
-    // Solo mencionamos DNI si ese requisito está respaldado explícitamente
-    // por los datos comerciales obtenidos desde Google Sheets.
-    const requisitosTexto = String(vehiculo.requisitos || '').trim();
-    const soloDNIConfirmado =
-        vehiculo.soloDNI === true ||
-        /^dni$/i.test(requisitosTexto) ||
-        /solo\s+(?:con\s+)?(?:el\s+)?dni/i.test(requisitosTexto);
-
-    const ingresoSimple = soloDNIConfirmado
-        ? ' Podés ingresar solo con el DNI.'
-        : '';
-
-    return (
-        `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion}${ingresoSimple}\n\n` +
-        'Si querés, te cuento cómo funciona el Financiamiento de Fábrica para este modelo.'
+    // No volcamos toda la tabla de cuotas al primer contacto. El dato abre
+    // la conversación y Martín pasa a indagar como vendedor.
+    partes.push(
+        'Contame, ¿el vehículo lo necesitás principalmente para trabajar o para un uso más familiar/general?'
     );
-}
 
+    return partes.join(' ');
+}
 
 function responderFinanciacion(
     vehiculo
@@ -3678,12 +3701,19 @@ async function procesarMensaje(
     // "me interesa el 2008", "vi el anuncio del C3".
     // ========================================================
 
+    // Primero intentamos la ruta más corta: modelo explícito -> ficha concreta
+    // en Sheets. Solo si no alcanza, usamos el detector general de variantes.
+    const vehiculoDirectoInicial =
+        await obtenerVehiculoDirectoDesdeMensaje(mensaje);
+
     const modelosDirectosIniciales =
-        await detectarModelosDirectos(mensaje);
+        vehiculoDirectoInicial
+            ? [vehiculoDirectoInicial]
+            : await detectarModelosDirectos(mensaje);
 
     const modeloDirectoInicial =
         modelosDirectosIniciales.length === 1
-            ? modelosDirectosIniciales[0].key
+            ? (modelosDirectosIniciales[0].key || modelosDirectosIniciales[0].codigo)
             : null;
 
     const textoInicialNormalizado =
@@ -3756,7 +3786,10 @@ async function procesarMensaje(
         cliente.opcionesEsperadas = [];
 
         const vehiculoInicial =
-            await obtenerVehiculo(modeloDirectoInicial);
+            vehiculoDirectoInicial &&
+            normalizar(vehiculoDirectoInicial.key || vehiculoDirectoInicial.codigo) === normalizar(modeloDirectoInicial)
+                ? vehiculoDirectoInicial
+                : await obtenerVehiculo(modeloDirectoInicial);
 
         if (vehiculoInicial) {
             cliente.etapa = 'esperando_metodo';
@@ -3970,9 +4003,12 @@ async function procesarMensaje(
     // ========================================================
 
     const vehiculo =
-        await obtenerVehiculo(
-            cliente.modelo
-        );
+        vehiculoDirectoInicial &&
+        normalizar(vehiculoDirectoInicial.key || vehiculoDirectoInicial.codigo) === normalizar(cliente.modelo)
+            ? vehiculoDirectoInicial
+            : await obtenerVehiculo(
+                cliente.modelo
+            );
 
 
     if (
