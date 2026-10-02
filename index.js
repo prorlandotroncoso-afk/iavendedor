@@ -1369,7 +1369,7 @@ function responderInfoVersionSeleccionada(vehiculo) {
 
     return (
         `Bien, el ${nombreConAclaracion}${detalle} ` +
-        '¿Querés que te cuente cómo funciona la financiación o preferís información para adquisición directa?'
+        'Si querés, te cuento cómo funciona el Financiamiento de Fábrica para este modelo.'
     );
 }
 
@@ -2150,13 +2150,22 @@ function responderInfoInicial(vehiculo) {
             ? `Te cuento: el ${nombreVehiculo(vehiculo)} ${datos.join(', ')}.`
             : `Claro. Tengo información del ${nombreVehiculo(vehiculo)}.`;
 
-    const ingresoSimple = cuotaIngreso
-        ? ' Podés arrancar solo con el DNI.'
+    // No inferimos requisitos a partir de la existencia de una cuota.
+    // Solo mencionamos DNI si ese requisito está respaldado explícitamente
+    // por los datos comerciales obtenidos desde Google Sheets.
+    const requisitosTexto = String(vehiculo.requisitos || '').trim();
+    const soloDNIConfirmado =
+        vehiculo.soloDNI === true ||
+        /^dni$/i.test(requisitosTexto) ||
+        /solo\s+(?:con\s+)?(?:el\s+)?dni/i.test(requisitosTexto);
+
+    const ingresoSimple = soloDNIConfirmado
+        ? ' Podés ingresar solo con el DNI.'
         : '';
 
     return (
         `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion}${ingresoSimple}\n\n` +
-        '¿Querés que te cuente cómo funciona la financiación?'
+        'Si querés, te cuento cómo funciona el Financiamiento de Fábrica para este modelo.'
     );
 }
 
@@ -2171,7 +2180,7 @@ function responderFinanciacion(
     if (vehiculo.plan) {
 
         partes.push(
-            `La financiación es ${vehiculo.plan}`
+            `El Financiamiento de Fábrica es ${vehiculo.plan}`
         );
     }
 
@@ -2207,7 +2216,7 @@ function responderFinanciacion(
     ) {
 
         return (
-            'Tengo información de financiación para este modelo, ' +
+            'Tengo información de Financiamiento de Fábrica para este modelo, ' +
             'pero el detalle completo no está disponible en este momento. ' +
             `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
@@ -2955,11 +2964,11 @@ async function procesarRespuestaEsperada(
 ) {
 
     // --------------------------------------------------------
-    // ELECCIÓN DESPUÉS DE LA INFORMACIÓN INICIAL
+    // CONTINUIDAD DESPUÉS DE LA INFORMACIÓN INICIAL
     // --------------------------------------------------------
-    // Si Martín ofreció financiación o adquisición directa y el cliente
-    // responde solo "dale", "sí", "ok", etc., no adivinamos cuál
-    // de las dos opciones quiso elegir. Pedimos una aclaración concreta.
+    // Martín conduce espontáneamente hacia Financiamiento de Fábrica.
+    // La adquisición directa existe, pero solo se activa cuando el cliente
+    // la pide explícitamente (contado, efectivo, compra/adquisición directa).
 
     if (
         cliente.esperandoRespuesta ===
@@ -2980,9 +2989,17 @@ async function procesarRespuestaEsperada(
             analisis.confirmacion ||
             esConfirmacionSimple(mensaje)
         ) {
+            cliente.metodo = 'financiacion';
+            cliente.etapa = 'financiacion';
+            cliente.esperandoRespuesta = 'uso_vehiculo';
+            cliente.opcionesEsperadas = [];
+
+            const detalleFinanciacion =
+                responderFinanciacionParaCalificar(vehiculo);
+
             return (
-                'Dale. ¿Querés que te cuente cómo funciona la financiación ' +
-                'o preferís información para adquisición directa?'
+                `${detalleFinanciacion} Para orientarte mejor, ` +
+                '¿el vehículo lo necesitás para trabajo o para uso general?'
             );
         }
     }
@@ -3744,7 +3761,7 @@ async function procesarMensaje(
         if (vehiculoInicial) {
             cliente.etapa = 'esperando_metodo';
             cliente.esperandoRespuesta = 'metodo_compra';
-            cliente.opcionesEsperadas = ['directa', 'financiacion'];
+            cliente.opcionesEsperadas = ['financiacion'];
 
             const respuestaInicial =
                 responderInfoInicial(vehiculoInicial);
@@ -4878,6 +4895,22 @@ app.post(
 // ============================================================
 
 // ============================================================
+// LENGUAJE COMERCIAL DE SALIDA
+// ============================================================
+// Regla de marca: Martín nunca dice "Plan de Ahorro" al cliente.
+// Puede comprender esa expresión si la usa el cliente, pero al responder
+// siempre la reemplaza por "Financiamiento de Fábrica".
+function aplicarLenguajeComercialMartin(texto) {
+    return String(texto || '')
+        .replace(/planes?\s+de\s+ahorro/gi, coincidencia =>
+            /^planes/i.test(coincidencia)
+                ? 'Financiamientos de Fábrica'
+                : 'Financiamiento de Fábrica'
+        );
+}
+
+
+// ============================================================
 // MANYCHAT V5 - MOTOR ÚNICO + RESPUESTA DIRECTA
 // ============================================================
 //
@@ -5009,7 +5042,8 @@ async function procesarEntradaManyChat(body = {}) {
             }
 
             const inicioProcesamiento = Date.now();
-            const reply = await procesarMensaje(mensaje, identificador);
+            const replyCrudo = await procesarMensaje(mensaje, identificador);
+            const reply = aplicarLenguajeComercialMartin(replyCrudo);
             console.log(`⏱️ [${requestId}] procesamiento: ${Date.now() - inicioProcesamiento} ms`);
 
             console.log(`📤 [${requestId}] Respuesta Martin: ${reply}`);

@@ -66,7 +66,7 @@ export async function listarModelosDisponibles() {
             const vehiculosSheets = await listarVehiculosDesdeSheets();
 
             if (Array.isArray(vehiculosSheets) && vehiculosSheets.length > 0) {
-                const vehiculosValidos = vehiculosSheets
+                return vehiculosSheets
                     .filter(vehiculo => vehiculoTieneDatos(vehiculo))
                     .filter(vehiculo => vehiculo.activo !== false)
                     .map(vehiculo => {
@@ -74,19 +74,22 @@ export async function listarModelosDisponibles() {
                         return { ...vehiculo, key };
                     })
                     .filter(vehiculo => vehiculo.key);
-
-                if (vehiculosValidos.length > 0) {
-                    return vehiculosValidos;
-                }
             }
 
-            console.warn('⚠️ Sheets no devolvió vehículos. Uso campaigns.json.');
+            // BARRERA COMERCIAL: si Sheets está habilitado, nunca usamos
+            // campaigns.json como fuente alternativa de datos comerciales.
+            console.warn('⚠️ Sheets no devolvió vehículos. Catálogo comercial no disponible.');
+            return [];
         } catch (error) {
             console.error('⚠️ No se pudo leer Google Sheets:', error.message);
-            console.log('📂 Usando campaigns.json como respaldo.');
+            console.warn('🛡️ Barrera comercial activa: no se usa campaigns.json como respaldo.');
+            return [];
         }
     }
 
+    // Respaldo local permitido únicamente cuando Google Sheets está
+    // explícitamente deshabilitado (desarrollo local), nunca en producción
+    // con USE_GOOGLE_SHEETS=true.
     const campaigns = cargarCampaignsLocal();
 
     return Object.entries(campaigns)
@@ -113,10 +116,12 @@ export async function obtenerVehiculo(modeloKey) {
                 return { ...vehiculoSheets, key };
             }
 
-            console.warn(`⚠️ ${key} no apareció en Sheets. Buscando respaldo local.`);
+            console.warn(`⚠️ ${key} no apareció en Sheets. No se usará respaldo local.`);
+            return null;
         } catch (error) {
             console.error(`⚠️ Error consultando ${key} en Google Sheets:`, error.message);
-            console.log('📂 Intentando campaigns.json.');
+            console.warn('🛡️ Barrera comercial activa: no se usa campaigns.json como respaldo.');
+            return null;
         }
     }
 
