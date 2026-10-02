@@ -3508,6 +3508,48 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // NUEVA BÚSQUEDA / CAMBIO DE VEHÍCULO: NO ARRASTRAR MODELO VIEJO
+    // ========================================================
+    // La memoria puede conservar un modelo de una conversación anterior.
+    // Si el cliente inicia una búsqueda genérica para cambiar su auto, ese
+    // modelo viejo NO debe convertirse en el vehículo objetivo actual.
+    // Conservamos el historial (incluido el usado que menciona), pero
+    // reiniciamos solamente el objetivo comercial y la calificación.
+
+    const iniciaCambioVehiculoGenerico =
+        contieneAlguna(
+            mensaje,
+            [
+                'quiero cambiar el auto', 'quiero cambiar mi auto',
+                'quiero cambiar el coche', 'quiero cambiar mi coche',
+                'quiero cambiar el vehiculo', 'quiero cambiar mi vehiculo',
+                'quiero cambiarlo', 'quiero renovarlo', 'quiero renovar el auto',
+                'quiero renovar mi auto', 'cambiarlo por algo',
+                'cambiar el auto por', 'cambiar mi auto por'
+            ]
+        );
+
+    if (iniciaCambioVehiculoGenerico) {
+        if (cliente.modelo) {
+            console.log(
+                `🧹 Nueva búsqueda: se descarta modelo anterior ${cliente.modelo}`
+            );
+        }
+
+        cliente.modelo = null;
+        cliente.metodo = null;
+        cliente.variantesPendientes = [];
+        cliente.usoVehiculo = null;
+        cliente.decisionCompra = null;
+        cliente.calificacionCompletada = false;
+        cliente.derivacionSolicitada = false;
+        cliente.etapa = 'indagacion_comercial';
+        cliente.esperandoRespuesta = null;
+        cliente.opcionesEsperadas = [];
+    }
+
+
+    // ========================================================
     // OPTIMIZACIÓN 1: RUTA RÁPIDA PARA SALUDO PURO
     // ========================================================
     // Un saludo puro no necesita consultar modelos, Google Sheets ni Qwen.
