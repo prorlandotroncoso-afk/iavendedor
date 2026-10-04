@@ -51,46 +51,16 @@ const GROQ_MODEL =
 
 
 // ============================================================
-// PRESUPUESTO DE LATENCIA + CACHE DE CATÁLOGO
+// PRESUPUESTO DE LATENCIA
 // ============================================================
 // ManyChat necesita recibir la respuesta con margen. El objetivo operativo
 // es <= 9 s punta a punta; por eso la llamada de interpretación a Qwen tiene
 // un presupuesto acotado y existe un fallback conversacional seguro.
-// El catálogo usado SOLO para detectar nombres/versiones se cachea 60 s.
-// Los datos comerciales concretos siguen leyéndose por obtenerVehiculo() y
-// nunca se inventan desde la IA.
+//
+// IMPORTANTE: Martín NO mantiene catálogo ni datos comerciales en caché.
+// VEHICULOS y CUOTAS se consultan en Google Sheets cuando hacen falta.
 
 const MAX_MS_INTERPRETACION_IA = 4200;
-const TTL_CATALOGO_MS = 60 * 1000;
-let cacheCatalogo = { cargadoEn: 0, datos: null, promesa: null };
-
-async function listarModelosCacheados() {
-    const ahora = Date.now();
-
-    if (
-        Array.isArray(cacheCatalogo.datos) &&
-        ahora - cacheCatalogo.cargadoEn < TTL_CATALOGO_MS
-    ) {
-        return cacheCatalogo.datos;
-    }
-
-    if (cacheCatalogo.promesa) {
-        return cacheCatalogo.promesa;
-    }
-
-    cacheCatalogo.promesa = Promise.resolve()
-        .then(() => listarModelosDisponibles())
-        .then(datos => {
-            cacheCatalogo.datos = Array.isArray(datos) ? datos : [];
-            cacheCatalogo.cargadoEn = Date.now();
-            return cacheCatalogo.datos;
-        })
-        .finally(() => {
-            cacheCatalogo.promesa = null;
-        });
-
-    return cacheCatalogo.promesa;
-}
 
 function conTimeout(promise, ms, etiqueta = 'operación') {
     let timer;
@@ -106,13 +76,6 @@ function conTimeout(promise, ms, etiqueta = 'operación') {
         .finally(() => clearTimeout(timer));
 }
 
-
-
-// Precarga asíncrona: evita que el primer cliente después de un deploy pague
-// el costo completo de cargar el catálogo. Nunca bloquea el arranque.
-listarModelosCacheados().catch(error => {
-    console.warn('⚠️ No se pudo precargar catálogo:', error.message);
-});
 
 // ============================================================
 // WHATSAPP CLOUD API - CONFIGURACIÓN
@@ -1299,49 +1262,16 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
 
 
 // ============================================================
-// RUTA DIRECTA A SHEETS PARA MODELOS EXPLÍCITOS
+// RESOLUCIÓN DE MODELO / VERSIÓN DESDE SHEETS
 // ============================================================
-// Si el cliente escribe un modelo inequívoco como "C3", "2008" o
-// "208 manual", intentamos consultar directamente SU ficha en Sheets.
-// No hay datos comerciales locales ni cálculos: Sheets sigue siendo la
-// única fuente de verdad. Si no podemos resolver el código de forma segura,
-// cae al detector general existente (útil para variantes ambiguas).
-
-function candidatosCodigoModeloExplicito(mensaje) {
-    const texto = normalizar(mensaje);
-    const tokens = texto.match(/\b[a-z]*\d+[a-z0-9]*\b/g) || [];
-    const unicos = [...new Set(tokens.filter(t => t.length >= 2 && t.length <= 12))];
-
-    if (unicos.length !== 1) return [];
-
-    const base = unicos[0];
-    const manual = texto.includes('manual') || patronTokenVehiculo('mt').test(texto);
-    const automatico = texto.includes('automatico') || texto.includes('automatica') || patronTokenVehiculo('at').test(texto);
-
-    // Convención ya utilizada por Martín para variantes MT/AT. Se intenta
-    // primero la variante explícita y luego el código base.
-    if (manual) return [`${base}_mt`, base];
-    if (automatico) return [`${base}_at`, base];
-    return [base];
-}
-
-async function obtenerVehiculoDirectoDesdeMensaje(mensaje) {
-    const candidatos = candidatosCodigoModeloExplicito(mensaje);
-
-    for (const codigo of candidatos) {
-        const vehiculo = await obtenerVehiculo(codigo);
-        if (vehiculo) {
-            console.log(`⚡ Sheets directo: ${codigo}`);
-            return vehiculo;
-        }
-    }
-
-    return null;
-}
+// Lo que escribe el cliente ("C3", "208 manual", etc.) es lenguaje humano,
+// NO un código técnico. Primero leemos VEHICULOS desde Sheets y buscamos las
+// coincidencias reales. Si hay varias, Martín indaga; nunca prueba el texto
+// del cliente como si fuera un código interno.
 
 async function detectarModelosDirectos(mensaje) {
 
-    const modelos = await listarModelosCacheados();
+    const modelos = await listarModelosDisponibles();
     const texto = normalizar(mensaje);
 
     const coincidenciasBase = modelos.filter(vehiculo =>
@@ -1776,7 +1706,7 @@ async function interpretarMensaje(
     try {
 
         const modelos =
-            await listarModelosCacheados();
+            await listarModelosDisponibles();
 
 
         const clavesModelos =
@@ -2894,7 +2824,7 @@ Respondé directamente.
 
 async function responderConsultaAbiertaIA(mensaje, cliente) {
     try {
-        const vehiculos = await listarModelosCacheados();
+        const vehiculos = await listarModelosDisponibles();
 
         // El catálogo se entrega como referencia autorizada, pero Martín no debe
         // recitarlo. Sirve para saber qué existe si la conversación ya permite
@@ -3572,11 +3502,44 @@ async function procesarMensaje(
         cliente.variantesPendientes.length > 0
     ) {
         const modelosDisponibles =
-            await listarModelosCacheados();
+            await listarModelosDisponibles();
 
         const pendientes = modelosDisponibles.filter(v =>
             cliente.variantesPendientes.includes(v.key)
         );
+
+        // Si el cliente no conoce las versiones, no lo obligamos a hablar en
+        // lenguaje técnico. Le damos una referencia comercial simple usando
+        // EXCLUSIVAMENTE la cuota 1 de cada fila de VEHICULOS en Sheets.
+        const noConoceVersion = contieneAlguna(mensaje, [
+            'no se', 'no sé', 'no conozco', 'ni idea', 'no vi',
+            'ninguno', 'ninguna', 'cualquiera', 'ayudame', 'ayúdame'
+        ]);
+
+        if (noConoceVersion && pendientes.length > 1) {
+            const conCuota = pendientes
+                .map(v => ({
+                    vehiculo: v,
+                    cuota: numeroDesdeMonto(v.cuota_1 || v.cuota1)
+                }))
+                .filter(x => x.cuota !== null);
+
+            if (conCuota.length >= 2) {
+                const referencias = conCuota
+                    .map(x => `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`);
+
+                const textoReferencias = referencias.length === 2
+                    ? `${referencias[0]} y ${referencias[1]}`
+                    : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
+
+                const respuesta =
+                    `No hay problema. Para que tengas una referencia, tengo ${textoReferencias}. ` +
+                    '¿Cuál de esas cuotas de ingreso te queda más cómoda?';
+
+                guardarHistorial(cliente, 'martin', respuesta);
+                return respuesta;
+            }
+        }
 
         const filtradas =
             filtrarVariantesPorDetalle(mensaje, pendientes);
@@ -3591,7 +3554,7 @@ async function procesarMensaje(
             cliente.opcionesEsperadas = [];
 
             const respuesta =
-                responderInfoVersionSeleccionada(elegida);
+                responderInfoInicial(elegida);
 
             guardarHistorial(cliente, 'martin', respuesta);
             return respuesta;
@@ -3701,15 +3664,10 @@ async function procesarMensaje(
     // "me interesa el 2008", "vi el anuncio del C3".
     // ========================================================
 
-    // Primero intentamos la ruta más corta: modelo explícito -> ficha concreta
-    // en Sheets. Solo si no alcanza, usamos el detector general de variantes.
-    const vehiculoDirectoInicial =
-        await obtenerVehiculoDirectoDesdeMensaje(mensaje);
-
+    // El texto del cliente nunca se usa como código técnico.
+    // Consultamos VEHICULOS en Sheets y resolvemos contra las filas reales.
     const modelosDirectosIniciales =
-        vehiculoDirectoInicial
-            ? [vehiculoDirectoInicial]
-            : await detectarModelosDirectos(mensaje);
+        await detectarModelosDirectos(mensaje);
 
     const modeloDirectoInicial =
         modelosDirectosIniciales.length === 1
@@ -3744,8 +3702,7 @@ async function procesarMensaje(
 
     if (
         modelosDirectosIniciales.length > 1 &&
-        expresaInteresGeneralInicial &&
-        !pideDatoEspecificoInicial
+        (expresaInteresGeneralInicial || pideDatoEspecificoInicial)
     ) {
         cliente.modelo = null;
         cliente.etapa = 'esperando_version';
@@ -3785,11 +3742,9 @@ async function procesarMensaje(
         cliente.derivacionSolicitada = false;
         cliente.opcionesEsperadas = [];
 
-        const vehiculoInicial =
-            vehiculoDirectoInicial &&
-            normalizar(vehiculoDirectoInicial.key || vehiculoDirectoInicial.codigo) === normalizar(modeloDirectoInicial)
-                ? vehiculoDirectoInicial
-                : await obtenerVehiculo(modeloDirectoInicial);
+        // La fila seleccionada ya proviene de VEHICULOS en Sheets. Para esta
+        // presentación inicial no hacemos una segunda lectura innecesaria.
+        const vehiculoInicial = modelosDirectosIniciales[0];
 
         if (vehiculoInicial) {
             cliente.etapa = 'esperando_metodo';
@@ -4003,12 +3958,9 @@ async function procesarMensaje(
     // ========================================================
 
     const vehiculo =
-        vehiculoDirectoInicial &&
-        normalizar(vehiculoDirectoInicial.key || vehiculoDirectoInicial.codigo) === normalizar(cliente.modelo)
-            ? vehiculoDirectoInicial
-            : await obtenerVehiculo(
-                cliente.modelo
-            );
+        await obtenerVehiculo(
+            cliente.modelo
+        );
 
 
     if (
