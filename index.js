@@ -1185,6 +1185,158 @@ function respuestaElegirVersion(vehiculos = []) {
 }
 
 
+
+function cuotaIngresoVehiculo(vehiculo) {
+    return numeroDesdeMonto(
+        vehiculo?.cuota_1 ||
+        vehiculo?.cuota1 ||
+        vehiculo?.suscripcion ||
+        null
+    );
+}
+
+
+function extraerReferenciasDeMonto(mensaje) {
+    const texto = String(mensaje || '');
+    const coincidencias = texto.match(/\$?\s*\d[\d.\s]*(?:,\d+)?\s*(?:mil|lucas?)?/gi) || [];
+    const montos = [];
+
+    for (const coincidencia of coincidencias) {
+        const normal = normalizar(coincidencia);
+        const usaMiles = /\b(mil|luca|lucas)\b/.test(normal);
+        const limpio = normal
+            .replace(/\$/g, '')
+            .replace(/\b(mil|luca|lucas)\b/g, '')
+            .trim();
+
+        let numero = numeroDesdeMonto(limpio);
+        if (numero === null) continue;
+
+        if (usaMiles) {
+            numero *= 1000;
+        } else if (numero > 0 && numero < 1000) {
+            // En una conversación sobre cuotas, "la de 135" suele ser una
+            // referencia abreviada a 135 mil. Solo se usará si identifica
+            // inequívocamente una de las opciones reales de Sheets.
+            numero *= 1000;
+        }
+
+        montos.push(numero);
+    }
+
+    return [...new Set(montos)];
+}
+
+
+function seleccionarVariantePorContexto(mensaje, vehiculos = [], ultimaRespuestaMartin = '') {
+    if (!Array.isArray(vehiculos) || vehiculos.length === 0) return null;
+
+    // 1) Nombre, versión, transmisión u otro detalle explícito ya soportado.
+    const porDetalle = filtrarVariantesPorDetalle(mensaje, vehiculos);
+    if (porDetalle.length === 1) return porDetalle[0];
+
+    const texto = normalizar(mensaje);
+
+    // 2) Referencias naturales por posición respecto de las opciones que
+    // Martín acaba de presentar. No hay nombres ni modelos hardcodeados.
+    const posiciones = [
+        { indice: 0, frases: ['la primera', 'el primero', 'primera opcion', 'primera opción'] },
+        { indice: 1, frases: ['la segunda', 'el segundo', 'segunda opcion', 'segunda opción'] },
+        { indice: 2, frases: ['la tercera', 'el tercero', 'tercera opcion', 'tercera opción'] }
+    ];
+
+    // Respetamos el orden REAL en que Martín presentó las opciones en su
+    // respuesta anterior. Así "la primera" no depende del orden interno de Sheets.
+    const respuestaAnterior = normalizar(ultimaRespuestaMartin || '');
+    const vehiculosEnOrdenPresentado = [...vehiculos].sort((a, b) => {
+        const ia = respuestaAnterior.indexOf(normalizar(nombreVehiculo(a)));
+        const ib = respuestaAnterior.indexOf(normalizar(nombreVehiculo(b)));
+        const pa = ia >= 0 ? ia : Number.MAX_SAFE_INTEGER;
+        const pb = ib >= 0 ? ib : Number.MAX_SAFE_INTEGER;
+        return pa - pb;
+    });
+
+    for (const posicion of posiciones) {
+        if (
+            posicion.indice < vehiculosEnOrdenPresentado.length &&
+            posicion.frases.some(frase => texto.includes(normalizar(frase)))
+        ) {
+            return vehiculosEnOrdenPresentado[posicion.indice];
+        }
+    }
+
+    // 3) "La más barata / la cuota más baja": comparamos únicamente cuotas
+    // reales de las opciones activas obtenidas de VEHICULOS.
+    if (contieneAlguna(mensaje, [
+        'la mas barata', 'la más barata', 'el mas barato', 'el más barato',
+        'la mas economica', 'la más económica', 'la cuota mas baja',
+        'la cuota más baja', 'la mas accesible', 'la más accesible'
+    ])) {
+        const conCuota = vehiculos
+            .map(v => ({ vehiculo: v, cuota: cuotaIngresoVehiculo(v) }))
+            .filter(x => x.cuota !== null)
+            .sort((a, b) => a.cuota - b.cuota);
+
+        if (conCuota.length > 0) {
+            const minimo = conCuota[0].cuota;
+            const empatadas = conCuota.filter(x => x.cuota === minimo);
+            if (empatadas.length === 1) return empatadas[0].vehiculo;
+        }
+    }
+
+    // 4) Referencia por monto: "$135.300", "135 mil", "135 lucas", etc.
+    // Se acepta solo cuando el monto identifica UNA opción de manera segura.
+    const referencias = extraerReferenciasDeMonto(mensaje);
+    for (const referencia of referencias) {
+        const candidatas = vehiculos.filter(v => {
+            const cuota = cuotaIngresoVehiculo(v);
+            if (cuota === null) return false;
+            return Math.abs(cuota - referencia) <= 1000;
+        });
+
+        if (candidatas.length === 1) return candidatas[0];
+    }
+
+    return null;
+}
+
+
+function pideRequisitosParaEmpezar(mensaje) {
+    return contieneAlguna(mensaje, [
+        'requisito', 'requisitos', 'dni', 'documentacion', 'documentos',
+        'que necesito', 'qué necesito', 'que hace falta', 'qué hace falta',
+        'para empezar', 'para arrancar', 'para ingresar'
+    ]);
+}
+
+
+function respuestaVariantesConCuotasNatural(vehiculos = [], mensaje = '') {
+    const conCuota = vehiculos
+        .map(v => ({ vehiculo: v, cuota: cuotaIngresoVehiculo(v) }))
+        .filter(x => x.cuota !== null)
+        .sort((a, b) => a.cuota - b.cuota);
+
+    if (conCuota.length === 0) {
+        return respuestaElegirVersion(vehiculos);
+    }
+
+    const familia = nombreFamiliaVehiculos(vehiculos);
+    const referencias = conCuota.map(x =>
+        `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`
+    );
+    const textoReferencias = referencias.length === 1
+        ? referencias[0]
+        : referencias.length === 2
+            ? `${referencias[0]} y ${referencias[1]}`
+            : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
+
+    return (
+        `Mirá, tengo ${vehiculos.length} opciones del ${familia}: ${textoReferencias}. ` +
+        'Por lo que me contás, podemos arrancar comparando estas opciones. ¿Cómo las ves?'
+    );
+}
+
+
 function coincideVehiculoConTexto(vehiculo, textoNormalizado) {
 
     const key = normalizar(vehiculo?.key || '');
@@ -1437,7 +1589,14 @@ async function clasificarLocal(mensaje) {
                 'requisitos',
                 'dni',
                 'documentacion',
-                'documentos'
+                'documentos',
+                'que necesito',
+                'qué necesito',
+                'que hace falta',
+                'qué hace falta',
+                'para empezar',
+                'para arrancar',
+                'para ingresar'
             ]
         )
     ) {
@@ -3533,12 +3692,53 @@ async function procesarMensaje(
                     : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
 
                 const respuesta =
-                    `No hay problema. Para que tengas una referencia, tengo ${textoReferencias}. ` +
-                    '¿Cuál de esas cuotas de ingreso te queda más cómoda?';
+                    respuestaVariantesConCuotasNatural(
+                        pendientes,
+                        mensaje
+                    );
 
                 guardarHistorial(cliente, 'martin', respuesta);
                 return respuesta;
             }
+        }
+
+        // Antes de pedir que repita el nombre de la versión, intentamos
+        // entender cómo una persona se referiría naturalmente a las opciones
+        // que Martín acaba de mostrar: por cuota, posición, versión o "la más barata".
+        // La selección se hace SIEMPRE contra las variantes activas de Sheets.
+        const elegidaPorContexto =
+            seleccionarVariantePorContexto(mensaje, pendientes, cliente.ultimoMensajeMartin);
+
+        if (elegidaPorContexto) {
+            const elegida = elegidaPorContexto;
+
+            cliente.modelo = elegida.key;
+            cliente.variantesPendientes = [];
+            cliente.etapa = 'vehiculo_identificado';
+            cliente.esperandoRespuesta = null;
+            cliente.opcionesEsperadas = [];
+
+            let respuesta;
+
+            if (pideRequisitosParaEmpezar(mensaje)) {
+                cliente.etapa = 'consultando_requisitos';
+                cliente.esperandoRespuesta = 'aceptar_derivacion';
+                respuesta =
+                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
+                    responderRequisitos(elegida);
+            } else if (contieneAlguna(mensaje, ['cuota', 'cuotas', 'detalle de cuotas'])) {
+                cliente.etapa = 'consultando_cuotas';
+                respuesta =
+                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
+                    responderCuotas(elegida);
+            } else {
+                respuesta =
+                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
+                    'Contame qué te gustaría saber y seguimos desde ahí.';
+            }
+
+            guardarHistorial(cliente, 'martin', respuesta);
+            return respuesta;
         }
 
         const filtradas =
@@ -3570,7 +3770,7 @@ async function procesarMensaje(
         }
 
         const respuesta =
-            'No llegué a identificar cuál de esas versiones querés. ' +
+            'Disculpá, no entendí bien a cuál de las opciones te referís. ' +
             respuestaElegirVersion(pendientes);
 
         guardarHistorial(cliente, 'martin', respuesta);
@@ -3758,8 +3958,10 @@ async function procesarMensaje(
                         : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
 
                 respuesta =
-                    `Tengo ${modelosDirectosIniciales.length} opciones. ${textoReferencias}. ` +
-                    '¿Cuál de esas cuotas de ingreso te queda más cómoda para arrancar?';
+                    respuestaVariantesConCuotasNatural(
+                        modelosDirectosIniciales,
+                        mensaje
+                    );
             }
         }
 
@@ -3769,7 +3971,10 @@ async function procesarMensaje(
 
         // Si el cliente abrió el mensaje saludando, Martín también saluda.
         // Se agrega sobre la respuesta ya resuelta sin tocar la detección de modelos.
-        if (tieneSaludoInicial(mensaje)) {
+        if (
+            tieneSaludoInicial(mensaje) &&
+            !normalizar(respuesta).startsWith('hola')
+        ) {
             respuesta = `¡Hola! ${respuesta}`;
         }
 
