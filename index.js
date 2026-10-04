@@ -1310,6 +1310,34 @@ function pideRequisitosParaEmpezar(mensaje) {
 }
 
 
+// Detecta una preferencia expresada en lenguaje natural por una cuota de entrada
+// baja/accesible. No conoce modelos ni montos: solo interpreta el criterio del
+// cliente; los valores concretos siguen viniendo exclusivamente de VEHICULOS.
+function buscaCuotaDeIngresoAccesible(mensaje) {
+    const t = normalizar(mensaje);
+
+    if (contieneAlguna(t, [
+        'cuota accesible', 'cuota economica', 'cuota baja',
+        'cuota inicial accesible', 'cuota inicial economica', 'cuota inicial baja',
+        'cuota de ingreso accesible', 'cuota de ingreso economica', 'cuota de ingreso baja',
+        'no quiero pagar mucho', 'no quisiera pagar mucho',
+        'no quiero arrancar pagando mucho', 'no quisiera arrancar pagando mucho',
+        'no quiero gastar mucho en cuotas', 'lo mas barato', 'mas barato',
+        'lo mas economico', 'mas economico'
+    ])) {
+        return true;
+    }
+
+    // Admite modificadores naturales entre "cuota" y la idea de precio:
+    // "cuota más bien baja", "cuota lo más baja posible", etc.
+    const mencionaCuota = /\b(cuota|cuotas)\b/.test(t);
+    const expresaBaja = /\b(baja|bajas|barata|baratas|economica|economicas|accesible|accesibles)\b/.test(t);
+    const rechazaAlta = /\b(no quiero|no quisiera|no busco|sin)\b[^.!?]{0,55}\b(alta|altas|cara|caras)\b/.test(t);
+
+    return mencionaCuota && (expresaBaja || rechazaAlta);
+}
+
+
 function respuestaVariantesConCuotasNatural(vehiculos = [], mensaje = '') {
     const conCuota = vehiculos
         .map(v => ({ vehiculo: v, cuota: cuotaIngresoVehiculo(v) }))
@@ -3923,14 +3951,8 @@ async function procesarMensaje(
             cliente.usoVehiculo = usoInformadoInicial;
         }
 
-        const buscaCuotaAccesible = contieneAlguna(mensaje, [
-            'cuota muy alta', 'cuota alta', 'cuota baja', 'cuota accesible',
-            'cuota economica', 'cuota económica', 'no quiero pagar mucho',
-            'no quisiera pagar mucho', 'no quiero arrancar pagando mucho',
-            'no quisiera arrancar pagando', 'no quiero gastar mucho en cuotas',
-            'lo mas barato', 'lo más barato', 'mas barato', 'más barato',
-            'lo mas economico', 'lo más económico', 'accesible'
-        ]);
+        const buscaCuotaAccesible =
+            buscaCuotaDeIngresoAccesible(mensaje);
 
         let respuesta;
 
