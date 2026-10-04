@@ -3712,8 +3712,66 @@ async function procesarMensaje(
         cliente.opcionesEsperadas =
             [...cliente.variantesPendientes];
 
-        const respuesta =
-            respuestaElegirVersion(modelosDirectosIniciales);
+        // Conservamos lo que el cliente ya contó en este mismo mensaje para no
+        // volver a preguntarlo después. Esto es contexto conversacional, no dato
+        // comercial: las condiciones concretas siguen saliendo únicamente de Sheets.
+        const usoInformadoInicial = respuestaUsoVehiculo(mensaje);
+        if (
+            usoInformadoInicial === 'trabajo' ||
+            usoInformadoInicial === 'uso general'
+        ) {
+            cliente.usoVehiculo = usoInformadoInicial;
+        }
+
+        const buscaCuotaAccesible = contieneAlguna(mensaje, [
+            'cuota muy alta', 'cuota alta', 'cuota baja', 'cuota accesible',
+            'cuota economica', 'cuota económica', 'no quiero pagar mucho',
+            'no quisiera pagar mucho', 'no quiero arrancar pagando mucho',
+            'no quisiera arrancar pagando', 'no quiero gastar mucho en cuotas',
+            'lo mas barato', 'lo más barato', 'mas barato', 'más barato',
+            'lo mas economico', 'lo más económico', 'accesible'
+        ]);
+
+        let respuesta;
+
+        // Si el cliente no conoce las versiones y ya nos dijo que busca una cuota
+        // accesible, no lo obligamos a elegir por nombre técnico. Le mostramos una
+        // referencia simple usando EXCLUSIVAMENTE la cuota 1 leída de VEHICULOS.
+        if (buscaCuotaAccesible) {
+            const conCuota = modelosDirectosIniciales
+                .map(v => ({
+                    vehiculo: v,
+                    cuota: numeroDesdeMonto(v.cuota_1 || v.cuota1)
+                }))
+                .filter(x => x.cuota !== null)
+                .sort((a, b) => a.cuota - b.cuota);
+
+            if (conCuota.length > 0) {
+                const referencias = conCuota.map(x =>
+                    `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`
+                );
+
+                const textoReferencias = referencias.length === 1
+                    ? referencias[0]
+                    : referencias.length === 2
+                        ? `${referencias[0]} y ${referencias[1]}`
+                        : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
+
+                respuesta =
+                    `Tengo ${modelosDirectosIniciales.length} opciones. ${textoReferencias}. ` +
+                    '¿Cuál de esas cuotas de ingreso te queda más cómoda para arrancar?';
+            }
+        }
+
+        if (!respuesta) {
+            respuesta = respuestaElegirVersion(modelosDirectosIniciales);
+        }
+
+        // Si el cliente abrió el mensaje saludando, Martín también saluda.
+        // Se agrega sobre la respuesta ya resuelta sin tocar la detección de modelos.
+        if (tieneSaludoInicial(mensaje)) {
+            respuesta = `¡Hola! ${respuesta}`;
+        }
 
         console.log(
             '🚗 Variantes detectadas:',
