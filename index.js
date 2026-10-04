@@ -51,33 +51,6 @@ const GROQ_MODEL =
 
 
 // ============================================================
-// PRESUPUESTO DE LATENCIA
-// ============================================================
-// ManyChat necesita recibir la respuesta con margen. El objetivo operativo
-// es <= 9 s punta a punta; por eso la llamada de interpretación a Qwen tiene
-// un presupuesto acotado y existe un fallback conversacional seguro.
-//
-// IMPORTANTE: Martín NO mantiene catálogo ni datos comerciales en caché.
-// VEHICULOS y CUOTAS se consultan en Google Sheets cuando hacen falta.
-
-const MAX_MS_INTERPRETACION_IA = 4200;
-
-function conTimeout(promise, ms, etiqueta = 'operación') {
-    let timer;
-    const limite = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-            const error = new Error(`${etiqueta} excedió ${ms} ms`);
-            error.code = 'MARTIN_TIMEOUT';
-            reject(error);
-        }, ms);
-    });
-
-    return Promise.race([promise, limite])
-        .finally(() => clearTimeout(timer));
-}
-
-
-// ============================================================
 // WHATSAPP CLOUD API - CONFIGURACIÓN
 // ============================================================
 //
@@ -1261,14 +1234,6 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
 }
 
 
-// ============================================================
-// RESOLUCIÓN DE MODELO / VERSIÓN DESDE SHEETS
-// ============================================================
-// Lo que escribe el cliente ("C3", "208 manual", etc.) es lenguaje humano,
-// NO un código técnico. Primero leemos VEHICULOS desde Sheets y buscamos las
-// coincidencias reales. Si hay varias, Martín indaga; nunca prueba el texto
-// del cliente como si fuera un código interno.
-
 async function detectarModelosDirectos(mensaje) {
 
     const modelos = await listarModelosDisponibles();
@@ -1340,7 +1305,7 @@ function responderInfoVersionSeleccionada(vehiculo) {
 
     return (
         `Bien, el ${nombreConAclaracion}${detalle} ` +
-        'Si querés, te cuento cómo funciona el Financiamiento de Fábrica para este modelo.'
+        '¿Querés que te cuente cómo funciona la financiación o preferís información para adquisición directa?'
     );
 }
 
@@ -1652,53 +1617,26 @@ async function interpretarMensaje(
 
 
     // ========================================================
-    // RUTA LOCAL SEGURA PARA INTENCIONES COMERCIALES EXPLÍCITAS
+    // V5.1 - RUTA LOCAL RÁPIDA
     // ========================================================
-    // Esta optimización NO genera respuestas comerciales ni reemplaza
-    // la conversación libre de Qwen. Solo evita pedirle a la IA que
-    // vuelva a clasificar mensajes cuyo significado comercial ya quedó
-    // inequívocamente identificado por reglas locales. Los datos concretos
-    // (precios, cuotas, requisitos, etc.) siguen saliendo de Google Sheets.
-    // Mensajes contextuales, ambiguos, confirmaciones, negaciones y lenguaje
-    // no cubierto por estas reglas continúan pasando por Qwen.
-
-    const intencionesLocalesSeguras = new Set([
-        'financiacion',
-        'directa',
-        'cuotas',
-        'requisitos',
-        'precio',
-        'gastos_entrega',
-        'equipamiento',
-        'material'
-    ]);
-
-    const tieneIntencionComercialExplicita =
-        respaldo.intenciones.some(
-            intencion => intencionesLocalesSeguras.has(intencion)
-        );
-
-    const requiereContextoConversacional =
-        respaldo.confirmacion === true ||
-        respaldo.negacion === true;
+    // Si el mensaje ya quedó inequívocamente clasificado por reglas locales,
+    // no hacemos una llamada a Qwen solo para confirmar lo que ya sabemos.
+    // Esto evita sumar una llamada de IA antes de responder cuotas, precio,
+    // financiación, requisitos, etc. Qwen sigue interviniendo cuando el texto
+    // depende del contexto o no puede resolverse con seguridad localmente.
+    const intencionesLocalesClaras = (respaldo.intenciones || []).filter(
+        i => i !== 'saludo' && i !== 'otro'
+    );
 
     if (
-        tieneIntencionComercialExplicita &&
-        !requiereContextoConversacional
+        respaldo.modelo ||
+        intencionesLocalesClaras.length > 0 ||
+        esSaludo(mensaje)
     ) {
-        console.log(
-            '⚡ Clasificación local segura:',
-            JSON.stringify({
-                modelo: respaldo.modelo || null,
-                intenciones: respaldo.intenciones
-            })
-        );
-
         return {
             ...respaldo,
             ambigua: false,
-            aclaracion: null,
-            indagacion: null
+            aclaracion: null
         };
     }
 
@@ -1728,16 +1666,10 @@ async function interpretarMensaje(
         const prompt = `
 ${seller.prompt}
 
-Tu tarea principal es CLASIFICAR el mensaje del cliente.
+Tu única tarea es CLASIFICAR el mensaje del cliente.
 
-Además, SOLO cuando todavía NO haya un modelo objetivo identificado y la conversación requiera indagar para entender qué vehículo podría convenirle, podés completar el campo "indagacion" con UNA respuesta breve y natural para continuar la charla.
-
-BARRERA COMERCIAL ABSOLUTA:
-- "indagacion" sirve únicamente para conversar, comprender necesidad, uso, presupuesto general, preferencias u objeciones.
-- En "indagacion" NO podés mencionar ni afirmar precios, cuotas, cantidad de cuotas, porcentajes, anticipos, planes, bonificaciones, gastos, requisitos, equipamiento, disponibilidad, condiciones de entrega ni ninguna otra información comercial concreta.
-- Esos datos SOLO pueden salir después del Google Sheet mediante las funciones comerciales del servidor.
-- Si el cliente pregunta un dato comercial y todavía no hay modelo objetivo, indagá lo mínimo necesario para identificarlo; NO respondas el dato de memoria ni por conocimiento general.
-- No inventes información comercial.
+NO respondas al cliente.
+NO inventes información comercial.
 
 Devolvé ÚNICAMENTE JSON válido.
 
@@ -1826,10 +1758,6 @@ En esos casos NO agregues la intención "material".
 17. Usá "material" SOLAMENTE cuando el cliente pida explícitamente un PDF, ficha técnica,
 folleto, pauta, catálogo, archivo, documento o material comercial.
 
-18. Si completás "indagacion", debe sonar como un asesor humano: reconocé brevemente lo que el cliente dijo y hacé UNA sola pregunta útil. No hagas interrogatorios ni repitas datos que ya dio.
-
-19. "indagacion" NUNCA puede contener información comercial concreta. Su función es INDAGAR, no informar condiciones comerciales.
-
 CONTEXTO:
 
 Etapa:
@@ -1875,15 +1803,14 @@ FORMATO EXACTO:
   "confirmacion": false,
   "negacion": false,
   "ambigua": false,
-  "aclaracion": null,
-  "indagacion": null
+  "aclaracion": null
 }
 `;
 
 
+        const inicioQwenClasificacion = Date.now();
         const response =
-            await conTimeout(
-                groq.chat.completions.create({
+            await groq.chat.completions.create({
 
                 model:
                     GROQ_MODEL,
@@ -1907,11 +1834,10 @@ FORMATO EXACTO:
 
                 temperature: 0,
 
-                max_tokens: 140
-                }),
-                MAX_MS_INTERPRETACION_IA,
-                'Interpretación Qwen'
-            );
+                max_tokens: 180
+            });
+
+        console.log(`⏱️ Qwen clasificación: ${Date.now() - inicioQwenClasificacion} ms`);
 
 
         const contenido =
@@ -2062,13 +1988,6 @@ FORMATO EXACTO:
                     ? json.aclaracion.trim().slice(0, 220)
                     : null,
 
-            // Solo conversación/indagación. Nunca datos comerciales.
-            indagacion:
-                typeof json.indagacion === 'string' &&
-                json.indagacion.trim()
-                    ? json.indagacion.trim().slice(0, 320)
-                    : null,
-
             referenciaTemporal:
                 respaldo.referenciaTemporal
         };
@@ -2093,35 +2012,44 @@ FORMATO EXACTO:
 
 function responderInfoInicial(vehiculo) {
 
-    const nombre = nombreVehiculo(vehiculo);
-    const cuotaIngreso = vehiculo.cuota_1 || vehiculo.cuota1 || null;
-    const requisitosTexto = String(vehiculo.requisitos || '').trim();
+    const datos = [];
 
-    const partes = [
-        `¡Hola! Perfecto. Te cuento sobre el ${nombre}.`
-    ];
+    if (vehiculo.plan) {
+        datos.push(`tiene un plan ${vehiculo.plan}`);
+    }
+
+    if (vehiculo.plazo) {
+        datos.push(`a ${vehiculo.plazo} cuotas`);
+    }
+
+    if (vehiculo.precioLista) {
+        datos.push(`el precio de lista es de ${formatearPesos(vehiculo.precioLista)}`);
+    }
+
+    const cuotaIngreso =
+        vehiculo.cuota_1 ||
+        vehiculo.cuota1 ||
+        null;
 
     if (cuotaIngreso) {
-        partes.push(
-            `Podés acceder mediante Financiamiento de Fábrica con una cuota inicial de ${formatearPesos(cuotaIngreso)}.`
-        );
-    } else {
-        partes.push('Tenemos una opción de Financiamiento de Fábrica para este modelo.');
+        datos.push(`la cuota 1 es de ${formatearPesos(cuotaIngreso)}`);
     }
 
-    // Los requisitos se mencionan únicamente si existen en Sheets.
-    if (requisitosTexto) {
-        partes.push(`Para ingresar, los requisitos informados son: ${requisitosTexto}.`);
-    }
+    const introduccion =
+        datos.length > 0
+            ? `Te cuento: el ${nombreVehiculo(vehiculo)} ${datos.join(', ')}.`
+            : `Claro. Tengo información del ${nombreVehiculo(vehiculo)}.`;
 
-    // No volcamos toda la tabla de cuotas al primer contacto. El dato abre
-    // la conversación y Martín pasa a indagar como vendedor.
-    partes.push(
-        'Contame, ¿el vehículo lo necesitás principalmente para trabajar o para un uso más familiar/general?'
+    const ingresoSimple = cuotaIngreso
+        ? ' Podés arrancar solo con el DNI.'
+        : '';
+
+    return (
+        `¡Hola! ¿Cómo estás? Claro, no hay problema. ${introduccion}${ingresoSimple}\n\n` +
+        '¿Querés que te cuente cómo funciona la financiación?'
     );
-
-    return partes.join(' ');
 }
+
 
 function responderFinanciacion(
     vehiculo
@@ -2133,7 +2061,7 @@ function responderFinanciacion(
     if (vehiculo.plan) {
 
         partes.push(
-            `El Financiamiento de Fábrica es ${vehiculo.plan}`
+            `La financiación es ${vehiculo.plan}`
         );
     }
 
@@ -2169,7 +2097,7 @@ function responderFinanciacion(
     ) {
 
         return (
-            'Tengo información de Financiamiento de Fábrica para este modelo, ' +
+            'Tengo información de financiación para este modelo, ' +
             'pero el detalle completo no está disponible en este momento. ' +
             `Si querés, te lo puede confirmar ${seller.asesorDerivacion || 'Edgardo'}.`
         );
@@ -2875,6 +2803,7 @@ INSTRUCCIONES PARA ESTA RESPUESTA:
 Respondé directamente al cliente.
 `;
 
+        const inicioQwenAbierta = Date.now();
         const response = await groq.chat.completions.create({
             model: GROQ_MODEL,
             reasoning_effort: 'none',
@@ -2886,6 +2815,8 @@ Respondé directamente al cliente.
             temperature: 0.25,
             max_tokens: 220
         });
+
+        console.log(`⏱️ Qwen orientación abierta: ${Date.now() - inicioQwenAbierta} ms`);
 
         let respuesta = normalizarEstiloMartin(
             String(response.choices?.[0]?.message?.content || '')
@@ -2917,11 +2848,11 @@ async function procesarRespuestaEsperada(
 ) {
 
     // --------------------------------------------------------
-    // CONTINUIDAD DESPUÉS DE LA INFORMACIÓN INICIAL
+    // ELECCIÓN DESPUÉS DE LA INFORMACIÓN INICIAL
     // --------------------------------------------------------
-    // Martín conduce espontáneamente hacia Financiamiento de Fábrica.
-    // La adquisición directa existe, pero solo se activa cuando el cliente
-    // la pide explícitamente (contado, efectivo, compra/adquisición directa).
+    // Si Martín ofreció financiación o adquisición directa y el cliente
+    // responde solo "dale", "sí", "ok", etc., no adivinamos cuál
+    // de las dos opciones quiso elegir. Pedimos una aclaración concreta.
 
     if (
         cliente.esperandoRespuesta ===
@@ -2942,17 +2873,9 @@ async function procesarRespuestaEsperada(
             analisis.confirmacion ||
             esConfirmacionSimple(mensaje)
         ) {
-            cliente.metodo = 'financiacion';
-            cliente.etapa = 'financiacion';
-            cliente.esperandoRespuesta = 'uso_vehiculo';
-            cliente.opcionesEsperadas = [];
-
-            const detalleFinanciacion =
-                responderFinanciacionParaCalificar(vehiculo);
-
             return (
-                `${detalleFinanciacion} Para orientarte mejor, ` +
-                '¿el vehículo lo necesitás para trabajo o para uso general?'
+                'Dale. ¿Querés que te cuente cómo funciona la financiación ' +
+                'o preferís información para adquisición directa?'
             );
         }
     }
@@ -3490,6 +3413,23 @@ async function procesarMensaje(
 
 
     // ========================================================
+    // V5.1 - SALUDO PURO SIN IA
+    // ========================================================
+    // Un saludo puro no necesita catálogo, memoria semántica ni Qwen.
+    // Responderlo acá reduce latencia y evita consumir una llamada de IA.
+    if (esSaludo(mensaje)) {
+        cliente.etapa = 'esperando_modelo';
+        cliente.esperandoRespuesta = 'modelo';
+        cliente.opcionesEsperadas = [];
+
+        const respuesta = 'Hola, ¿en qué te puedo ayudar?';
+        guardarHistorial(cliente, 'martin', respuesta);
+        console.log('⚡ Ruta rápida local: saludo puro');
+        return respuesta;
+    }
+
+
+    // ========================================================
     // ELECCIÓN DE VARIANTE PENDIENTE
     // ========================================================
     // Si una consulta anterior coincidió con varias versiones, filtramos
@@ -3508,39 +3448,6 @@ async function procesarMensaje(
             cliente.variantesPendientes.includes(v.key)
         );
 
-        // Si el cliente no conoce las versiones, no lo obligamos a hablar en
-        // lenguaje técnico. Le damos una referencia comercial simple usando
-        // EXCLUSIVAMENTE la cuota 1 de cada fila de VEHICULOS en Sheets.
-        const noConoceVersion = contieneAlguna(mensaje, [
-            'no se', 'no sé', 'no conozco', 'ni idea', 'no vi',
-            'ninguno', 'ninguna', 'cualquiera', 'ayudame', 'ayúdame'
-        ]);
-
-        if (noConoceVersion && pendientes.length > 1) {
-            const conCuota = pendientes
-                .map(v => ({
-                    vehiculo: v,
-                    cuota: numeroDesdeMonto(v.cuota_1 || v.cuota1)
-                }))
-                .filter(x => x.cuota !== null);
-
-            if (conCuota.length >= 2) {
-                const referencias = conCuota
-                    .map(x => `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`);
-
-                const textoReferencias = referencias.length === 2
-                    ? `${referencias[0]} y ${referencias[1]}`
-                    : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
-
-                const respuesta =
-                    `No hay problema. Para que tengas una referencia, tengo ${textoReferencias}. ` +
-                    '¿Cuál de esas cuotas de ingreso te queda más cómoda?';
-
-                guardarHistorial(cliente, 'martin', respuesta);
-                return respuesta;
-            }
-        }
-
         const filtradas =
             filtrarVariantesPorDetalle(mensaje, pendientes);
 
@@ -3554,7 +3461,7 @@ async function procesarMensaje(
             cliente.opcionesEsperadas = [];
 
             const respuesta =
-                responderInfoInicial(elegida);
+                responderInfoVersionSeleccionada(elegida);
 
             guardarHistorial(cliente, 'martin', respuesta);
             return respuesta;
@@ -3579,82 +3486,6 @@ async function procesarMensaje(
 
 
     // ========================================================
-    // NUEVA BÚSQUEDA / CAMBIO DE VEHÍCULO: NO ARRASTRAR MODELO VIEJO
-    // ========================================================
-    // La memoria puede conservar un modelo de una conversación anterior.
-    // Si el cliente inicia una búsqueda genérica para cambiar su auto, ese
-    // modelo viejo NO debe convertirse en el vehículo objetivo actual.
-    // Conservamos el historial (incluido el usado que menciona), pero
-    // reiniciamos solamente el objetivo comercial y la calificación.
-
-    const iniciaCambioVehiculoGenerico =
-        contieneAlguna(
-            mensaje,
-            [
-                'quiero cambiar el auto', 'quiero cambiar mi auto',
-                'quiero cambiar el coche', 'quiero cambiar mi coche',
-                'quiero cambiar el vehiculo', 'quiero cambiar mi vehiculo',
-                'quiero cambiarlo', 'quiero renovarlo', 'quiero renovar el auto',
-                'quiero renovar mi auto', 'cambiarlo por algo',
-                'cambiar el auto por', 'cambiar mi auto por'
-            ]
-        );
-
-    if (iniciaCambioVehiculoGenerico) {
-        if (cliente.modelo) {
-            console.log(
-                `🧹 Nueva búsqueda: se descarta modelo anterior ${cliente.modelo}`
-            );
-        }
-
-        cliente.modelo = null;
-        cliente.metodo = null;
-        cliente.variantesPendientes = [];
-        cliente.usoVehiculo = null;
-        cliente.decisionCompra = null;
-        cliente.calificacionCompletada = false;
-        cliente.derivacionSolicitada = false;
-        cliente.etapa = 'indagacion_comercial';
-        cliente.esperandoRespuesta = null;
-        cliente.opcionesEsperadas = [];
-    }
-
-
-    // ========================================================
-    // OPTIMIZACIÓN 1: RUTA RÁPIDA PARA SALUDO PURO
-    // ========================================================
-    // Un saludo puro no necesita consultar modelos, Google Sheets ni Qwen.
-    // Se ubica después de la resolución de una variante pendiente para no
-    // alterar el comportamiento de una conversación que ya estaba esperando
-    // que el cliente eligiera una versión concreta.
-
-    if (
-        esSaludo(mensaje)
-    ) {
-        cliente.etapa =
-            'esperando_modelo';
-
-        cliente.esperandoRespuesta =
-            'modelo';
-
-        const respuesta =
-            'Hola, ¿en qué te puedo ayudar?';
-
-        console.log(
-            '⚡ Ruta rápida local: saludo puro'
-        );
-
-        guardarHistorial(
-            cliente,
-            'martin',
-            respuesta
-        );
-
-        return respuesta;
-    }
-
-
-    // ========================================================
     // RUTA RÁPIDA: ENTRADA DESDE PUBLICIDAD / CONSULTA GENERAL
     // ========================================================
     // Los mensajes típicos de anuncios no necesitan pasar primero
@@ -3664,18 +3495,63 @@ async function procesarMensaje(
     // "me interesa el 2008", "vi el anuncio del C3".
     // ========================================================
 
-    // El texto del cliente nunca se usa como código técnico.
-    // Consultamos VEHICULOS en Sheets y resolvemos contra las filas reales.
     const modelosDirectosIniciales =
         await detectarModelosDirectos(mensaje);
 
     const modeloDirectoInicial =
         modelosDirectosIniciales.length === 1
-            ? (modelosDirectosIniciales[0].key || modelosDirectosIniciales[0].codigo)
+            ? modelosDirectosIniciales[0].key
             : null;
 
     const textoInicialNormalizado =
         normalizar(mensaje);
+
+
+    // ========================================================
+    // V5.1 - CAMBIO DE VEHÍCULO USADO SIN MODELO 0 KM DEFINIDO
+    // ========================================================
+    // Frases como "Tengo un Gol 2018 y quiero cambiarlo" describen el auto
+    // actual del cliente, no un modelo 0 km del catálogo. No necesitamos usar
+    // Qwen primero para clasificar y después otra vez para redactar.
+    // Si no hay un modelo SURFRANCE identificado y la intención de cambio es
+    // explícita, hacemos una sola pregunta comercial útil de forma inmediata.
+    const expresaCambioVehiculoPropio =
+        contieneAlguna(
+            textoInicialNormalizado,
+            [
+                'quiero cambiarlo',
+                'quiero cambiarla',
+                'quiero cambiar mi auto',
+                'quiero cambiar mi vehiculo',
+                'quiero cambiar el auto',
+                'quiero cambiar el vehiculo',
+                'quiero cambiar de auto',
+                'quiero cambiar de vehiculo',
+                'quiero entregar mi auto',
+                'quiero entregar mi vehiculo',
+                'tengo un auto y quiero cambiar',
+                'tengo una camioneta y quiero cambiar'
+            ]
+        );
+
+    if (
+        !modeloDirectoInicial &&
+        modelosDirectosIniciales.length === 0 &&
+        expresaCambioVehiculoPropio
+    ) {
+        cliente.modelo = null;
+        cliente.etapa = 'indagacion_comercial';
+        cliente.esperandoRespuesta = null;
+        cliente.opcionesEsperadas = [];
+
+        const respuesta =
+            'Entiendo. Para orientarte mejor con el cambio, ¿para qué uso principal necesitás el nuevo auto?';
+
+        guardarHistorial(cliente, 'martin', respuesta);
+        console.log('⚡ Ruta rápida local: cambio de vehículo usado');
+        return respuesta;
+    }
+
 
     const pideDatoEspecificoInicial =
         contieneAlguna(
@@ -3702,7 +3578,8 @@ async function procesarMensaje(
 
     if (
         modelosDirectosIniciales.length > 1 &&
-        (expresaInteresGeneralInicial || pideDatoEspecificoInicial)
+        expresaInteresGeneralInicial &&
+        !pideDatoEspecificoInicial
     ) {
         cliente.modelo = null;
         cliente.etapa = 'esperando_version';
@@ -3742,14 +3619,13 @@ async function procesarMensaje(
         cliente.derivacionSolicitada = false;
         cliente.opcionesEsperadas = [];
 
-        // La fila seleccionada ya proviene de VEHICULOS en Sheets. Para esta
-        // presentación inicial no hacemos una segunda lectura innecesaria.
-        const vehiculoInicial = modelosDirectosIniciales[0];
+        const vehiculoInicial =
+            await obtenerVehiculo(modeloDirectoInicial);
 
         if (vehiculoInicial) {
             cliente.etapa = 'esperando_metodo';
             cliente.esperandoRespuesta = 'metodo_compra';
-            cliente.opcionesEsperadas = ['financiacion'];
+            cliente.opcionesEsperadas = ['directa', 'financiacion'];
 
             const respuestaInicial =
                 responderInfoInicial(vehiculoInicial);
@@ -3880,63 +3756,17 @@ async function procesarMensaje(
         !cliente.modelo
     ) {
 
-        // ====================================================
-        // BARRERA COMERCIAL SIN MODELO + UNA SOLA LLAMADA IA
-        // ====================================================
-        // La interpretación de Qwen puede proponer una frase de INDAGACIÓN,
-        // pero nunca datos comerciales. Evitamos una segunda llamada a Qwen
-        // (antes responderConsultaAbiertaIA), que era el principal cuello de
-        // botella y podía generalizar condiciones comerciales del catálogo.
-        // Precios, cuotas, planes, porcentajes, requisitos, equipamiento y
-        // demás condiciones SOLO se responden después de identificar un modelo
-        // y leer su fila autorizada de Google Sheets.
-
-        const intencionesQueExigenModelo = new Set([
-            'financiacion',
-            'directa',
-            'cuotas',
-            'requisitos',
-            'precio',
-            'gastos_entrega',
-            'entrega',
-            'equipamiento',
-            'material'
-        ]);
-
-        const pideDatoComercialSinModelo =
-            (analisis.intenciones || []).some(
-                intencion => intencionesQueExigenModelo.has(intencion)
+        const respuesta =
+            await responderConsultaAbiertaIA(
+                mensaje,
+                cliente
             );
-
-        let respuesta =
-            typeof analisis.indagacion === 'string'
-                ? normalizarEstiloMartin(analisis.indagacion.trim())
-                : '';
-
-        if (pideDatoComercialSinModelo) {
-            // No dejamos que una frase generada por IA responda condiciones
-            // comerciales sin vehículo identificado, aunque viniera presente.
-            respuesta = '';
-
-            if (!cliente.usoVehiculo) {
-                respuesta =
-                    'Claro. Las condiciones dependen del vehículo que terminemos viendo. ' +
-                    'Para orientarte bien sin pasarte datos que no correspondan, ¿lo usarías principalmente para trabajo, para la familia o para un poco de ambos?';
-            } else {
-                respuesta =
-                    'Claro. Para pasarte la información exacta primero necesito identificar qué modelo puede encajarte mejor. ' +
-                    '¿Hay algún tipo de auto o modelo que tengas en mente?';
-            }
-        }
-
-        if (!respuesta) {
-            respuesta =
-                'Entiendo. Para orientarte bien, ¿qué es lo más importante para vos en el próximo auto: el uso que le vas a dar, el espacio o mantener una cuota cómoda?';
-        }
 
         cliente.etapa =
             'indagacion_comercial';
 
+        // No fijamos una respuesta rígida esperada: el nuevo cerebro puede
+        // comprender la siguiente respuesta dentro del contexto completo.
         cliente.esperandoRespuesta =
             null;
 
@@ -4883,22 +4713,6 @@ app.post(
 // ============================================================
 
 // ============================================================
-// LENGUAJE COMERCIAL DE SALIDA
-// ============================================================
-// Regla de marca: Martín nunca dice "Plan de Ahorro" al cliente.
-// Puede comprender esa expresión si la usa el cliente, pero al responder
-// siempre la reemplaza por "Financiamiento de Fábrica".
-function aplicarLenguajeComercialMartin(texto) {
-    return String(texto || '')
-        .replace(/planes?\s+de\s+ahorro/gi, coincidencia =>
-            /^planes/i.test(coincidencia)
-                ? 'Financiamientos de Fábrica'
-                : 'Financiamiento de Fábrica'
-        );
-}
-
-
-// ============================================================
 // MANYCHAT V5 - MOTOR ÚNICO + RESPUESTA DIRECTA
 // ============================================================
 //
@@ -5030,8 +4844,7 @@ async function procesarEntradaManyChat(body = {}) {
             }
 
             const inicioProcesamiento = Date.now();
-            const replyCrudo = await procesarMensaje(mensaje, identificador);
-            const reply = aplicarLenguajeComercialMartin(replyCrudo);
+            const reply = await procesarMensaje(mensaje, identificador);
             console.log(`⏱️ [${requestId}] procesamiento: ${Date.now() - inicioProcesamiento} ms`);
 
             console.log(`📤 [${requestId}] Respuesta Martin: ${reply}`);
