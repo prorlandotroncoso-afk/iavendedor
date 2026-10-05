@@ -188,8 +188,10 @@ function getEstadoAtencion(telefono) {
 function getModoAtencion(telefono) {
     const estado = getEstadoAtencion(telefono);
 
+    // Tanto HUMANO como ESPERA tienen vencimiento. El reloj representa
+    // 30 minutos desde el ÚLTIMO mensaje del asesor, nunca del cliente.
     if (
-        estado.modo === 'ESPERA' &&
+        (estado.modo === 'HUMANO' || estado.modo === 'ESPERA') &&
         estado.reactivarDespuesDe &&
         Date.now() >= estado.reactivarDespuesDe
     ) {
@@ -197,7 +199,7 @@ function getModoAtencion(telefono) {
         estado.reactivarDespuesDe = null;
 
         console.log(
-            `🤖 Martín reactivado automáticamente para ${normalizarTelefono(telefono)}`
+            `🤖 Martín reactivado automáticamente para ${normalizarTelefono(telefono)} tras ${MINUTOS_REACTIVACION} min sin mensajes del asesor`
         );
     }
 
@@ -217,7 +219,10 @@ function setModoAtencion(telefono, modo, opciones = {}) {
 
     estado.modo = nuevoModo;
 
-    if (nuevoModo === 'ESPERA') {
+    // Una intervención humana siempre duerme a Martín por 30 minutos
+    // desde el último mensaje DEL ASESOR. ESPERA conserva la compatibilidad
+    // con el cierre manual, pero usa exactamente la misma caducidad.
+    if (nuevoModo === 'HUMANO' || nuevoModo === 'ESPERA') {
         estado.reactivarDespuesDe =
             opciones.reactivarDespuesDe ||
             Date.now() + MINUTOS_REACTIVACION * 60 * 1000;
@@ -368,11 +373,14 @@ async function cargarMemoriaPersistente(telefono, cliente) {
     const modo = String(m.modo || 'IA').toUpperCase();
     const reactivar = m.reactivarDespuesDe ? new Date(m.reactivarDespuesDe).getTime() : 0;
 
-    if (modo === 'ESPERA' && reactivar > Date.now()) {
-        setModoAtencion(clave, 'ESPERA', { reactivarDespuesDe: reactivar });
-    } else if (modo === 'HUMANO') {
-        setModoAtencion(clave, 'HUMANO');
+    if (
+        (modo === 'HUMANO' || modo === 'ESPERA') &&
+        reactivar > Date.now()
+    ) {
+        setModoAtencion(clave, modo, { reactivarDespuesDe: reactivar });
     } else {
+        // Compatibilidad con memorias antiguas: un HUMANO viejo sin fecha
+        // de reactivación no puede dejar a Martín dormido indefinidamente.
         setModoAtencion(clave, 'IA');
     }
 
@@ -401,7 +409,7 @@ async function guardarMemoriaPersistente(telefono, cliente, extras = {}) {
         ultimaInteraccion: new Date().toISOString(),
         modo,
         reactivarDespuesDe:
-            modo === 'ESPERA' && estado?.reactivarDespuesDe
+            (modo === 'HUMANO' || modo === 'ESPERA') && estado?.reactivarDespuesDe
                 ? new Date(estado.reactivarDespuesDe).toISOString()
                 : '',
         ultimaRespuestaMartin: cliente?.ultimoMensajeMartin || ''
@@ -5280,9 +5288,9 @@ async function procesarEntradaManyChat(body = {}) {
             ) {
                 registrarHistorialHumano(telefono, 'cliente', mensaje);
 
-                if (modoActual === 'ESPERA') {
-                    reiniciarEsperaSiCorresponde(telefono);
-                }
+                // IMPORTANTE: un mensaje del cliente NO reinicia el reloj.
+                // Martín seguirá callado hasta que se cumplan 30 minutos
+                // desde el último mensaje enviado por el asesor.
 
                 // No bloqueamos la respuesta al cliente por una escritura de Sheets.
                 Promise.resolve()
