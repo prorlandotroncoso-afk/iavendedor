@@ -299,7 +299,7 @@ async function leerMemoriaSheets(telefono) {
     if (!clave) return null;
     try {
         const url = `${MARTIN_SHEETS_WEBAPP_URL}?action=memoria&telefono=${encodeURIComponent(clave)}`;
-        const r = await fetch(url);
+        const r = await conTimeout(fetch(url), 1800, 'Lectura MEMORIA');
         const data = await r.json();
         if (!r.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${r.status}`);
         return data?.memoria || null;
@@ -1306,6 +1306,43 @@ function seleccionarVariantePorContexto(mensaje, vehiculos = [], ultimaRespuesta
     }
 
     return null;
+}
+
+
+function pideListadoVehiculosDisponibles(mensaje) {
+    const t = normalizar(mensaje);
+
+    const preguntaDisponibilidad = contieneAlguna(t, [
+        'que vehiculo tenes', 'que vehiculos tenes',
+        'de que vehiculo tenes info', 'de que vehiculos tenes info',
+        'que modelos tenes', 'que modelos hay',
+        'que autos tenes', 'que autos hay',
+        'que tenes disponible', 'que tienen disponible'
+    ]);
+
+    return preguntaDisponibilidad;
+}
+
+
+async function responderListadoVehiculosDisponibles() {
+    const vehiculos = await listarModelosDisponibles();
+    const nombres = [...new Set(
+        vehiculos
+            .map(v => String(v?.modelo || '').trim())
+            .filter(Boolean)
+    )];
+
+    if (nombres.length === 0) {
+        return 'En este momento no tengo modelos disponibles para informarte.';
+    }
+
+    const texto = nombres.length === 1
+        ? nombres[0]
+        : nombres.length === 2
+            ? `${nombres[0]} y ${nombres[1]}`
+            : `${nombres.slice(0, -1).join(', ')} y ${nombres[nombres.length - 1]}`;
+
+    return `Sí. En este momento tengo información de ${texto}. ¿Cuál querés que veamos?`;
 }
 
 
@@ -3682,6 +3719,23 @@ async function procesarMensaje(
 
     cliente.seguimiento24hEnviado =
         false;
+
+
+    // ========================================================
+    // CONSULTA ABIERTA POR VEHÍCULOS DISPONIBLES
+    // ========================================================
+    // Si el cliente pregunta qué vehículos/modelos tienen información,
+    // consultamos VEHICULOS completo. No limitamos la respuesta al modelo
+    // que venía conversando anteriormente.
+    if (pideListadoVehiculosDisponibles(mensaje)) {
+        const respuesta = await responderListadoVehiculosDisponibles();
+
+        cliente.esperandoRespuesta = null;
+        cliente.opcionesEsperadas = [];
+
+        guardarHistorial(cliente, 'martin', respuesta);
+        return respuesta;
+    }
 
 
     // ========================================================
