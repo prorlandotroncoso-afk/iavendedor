@@ -1415,11 +1415,11 @@ function coincideVehiculoConTexto(vehiculo, textoNormalizado) {
     const key = normalizar(vehiculo?.key || '');
     const modeloCompleto = normalizar(vehiculo?.modelo || '');
 
-    if (key && textoNormalizado.includes(key)) {
+    if (key && patronTokenVehiculo(key).test(textoNormalizado)) {
         return true;
     }
 
-    if (modeloCompleto && textoNormalizado.includes(modeloCompleto)) {
+    if (modeloCompleto && patronTokenVehiculo(modeloCompleto).test(textoNormalizado)) {
         return true;
     }
 
@@ -1465,8 +1465,8 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
         const modelo = normalizar(vehiculo?.modelo || '');
 
         return (
-            (key && texto.includes(key)) ||
-            (modelo && texto.includes(modelo))
+            (key && patronTokenVehiculo(key).test(texto)) ||
+            (modelo && patronTokenVehiculo(modelo).test(texto))
         );
     });
 
@@ -1476,13 +1476,15 @@ function filtrarVariantesPorDetalle(mensaje, vehiculos = []) {
 
     // Como última precisión, buscamos palabras propias de una variante
     // (por ejemplo "GT", "Allure", etc.) sin hardcodear modelos.
-    return vehiculos.filter(vehiculo => {
-        const palabras = normalizar(vehiculo?.modelo || '')
-            .split(/\s+/)
-            .filter(p => p.length >= 2);
-
-        return palabras.some(p => patronTokenVehiculo(p).test(texto));
-    });
+    const palabrasPorVehiculo = vehiculos.map(v =>
+        normalizar(v?.modelo || '').split(/\s+/).filter(p => p.length >= 2)
+    );
+    const comunes = palabrasPorVehiculo.length
+        ? palabrasPorVehiculo[0].filter(p => palabrasPorVehiculo.every(ps => ps.includes(p)))
+        : [];
+    return vehiculos.filter((vehiculo, i) =>
+        palabrasPorVehiculo[i].some(p => !comunes.includes(p) && patronTokenVehiculo(p).test(texto))
+    );
 }
 
 
@@ -1499,9 +1501,15 @@ async function detectarModelosDirectos(mensaje) {
     const modelos = await listarModelosDisponibles();
     const texto = normalizar(mensaje);
 
-    const coincidenciasBase = modelos.filter(vehiculo =>
+    let coincidenciasBase = modelos.filter(vehiculo =>
         coincideVehiculoConTexto(vehiculo, texto)
     );
+    if (coincidenciasBase.length === 0) {
+        coincidenciasBase = modelos.filter(v => {
+            const familia = normalizar(v?.modelo || '').split(/\s+/)[1];
+            return familia && patronTokenVehiculo(familia).test(texto);
+        });
+    }
 
     if (coincidenciasBase.length <= 1) {
         return coincidenciasBase;
@@ -3757,6 +3765,18 @@ async function procesarMensaje(
             cliente.variantesPendientes.includes(v.key)
         );
 
+        // El cliente puede cambiar de vehículo mientras elige una versión.
+        // En ese caso continuamos con la detección general de abajo.
+        const nuevosModelos = await detectarModelosDirectos(mensaje);
+        const refiereOtroVehiculo = nuevosModelos.length > 0 &&
+            nuevosModelos.every(v => !pendientes.some(p => p.key === v.key));
+        if (refiereOtroVehiculo) {
+            cliente.variantesPendientes = [];
+            cliente.esperandoRespuesta = null;
+            cliente.opcionesEsperadas = [];
+            cliente.modelo = null;
+        } else {
+
         // Si el cliente no conoce las versiones, no lo obligamos a hablar en
         // lenguaje técnico. Le damos una referencia comercial simple usando
         // EXCLUSIVAMENTE la cuota 1 de cada fila de VEHICULOS en Sheets.
@@ -3865,6 +3885,7 @@ async function procesarMensaje(
 
         guardarHistorial(cliente, 'martin', respuesta);
         return respuesta;
+        } // Fin de resolución de variante pendiente
     }
 
 
@@ -3991,8 +4012,7 @@ async function procesarMensaje(
         );
 
     if (
-        modelosDirectosIniciales.length > 1 &&
-        (expresaInteresGeneralInicial || pideDatoEspecificoInicial)
+        modelosDirectosIniciales.length > 1
     ) {
         cliente.modelo = null;
         cliente.etapa = 'esperando_version';
@@ -4074,7 +4094,6 @@ async function procesarMensaje(
 
     if (
         modeloDirectoInicial &&
-        expresaInteresGeneralInicial &&
         !pideDatoEspecificoInicial
     ) {
         cliente.modelo = modeloDirectoInicial;
@@ -4145,12 +4164,28 @@ async function procesarMensaje(
     // ACTUALIZAR MODELO
     // ========================================================
 
-    if (
-        analisis.modelo
-    ) {
-
-        cliente.modelo =
-            analisis.modelo;
+    if (analisis.modelo) {
+        const catalogo = await listarModelosDisponibles();
+        const candidata = catalogo.find(v => v.key === analisis.modelo);
+        const coincidenciasCliente = await detectarModelosDirectos(mensaje);
+        // La IA no puede decidir por el cliente una versión que no expresó.
+        if (candidata && coincidenciasCliente.length === 1 &&
+            coincidenciasCliente[0].key === candidata.key) {
+            cliente.modelo = candidata.key;
+        } else if (coincidenciasCliente.length > 1) {
+            cliente.modelo = null;
+            cliente.etapa = 'esperando_version';
+            cliente.esperandoRespuesta = 'version_vehiculo';
+            cliente.variantesPendientes = coincidenciasCliente.map(v => v.key);
+            cliente.opcionesEsperadas = [...cliente.variantesPendientes];
+            const respuesta = respuestaElegirVersion(coincidenciasCliente);
+            guardarHistorial(cliente, 'martin', respuesta);
+            return respuesta;
+        } else {
+            // Se conserva el modelo previo para consultas contextuales,
+            // pero nunca se acepta una nueva versión inferida por Qwen.
+            analisis.modelo = null;
+        }
     }
 
 
