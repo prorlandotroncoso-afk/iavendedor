@@ -2894,6 +2894,30 @@ function normalizarEstiloMartin(texto) {
 // 10. RESPUESTA IA SEGURA
 // ============================================================
 
+// Conversación sobre variantes: Qwen redacta, Sheets aporta hechos.
+// No obliga a elegir para comparar y nunca inventa fichas ni equipamiento.
+async function conversarVariantesIA(mensaje, cliente, variantes, instruccion = '') {
+    const historial = (cliente.historial || []).slice(-12)
+        .map(h => `${h.rol}: ${h.mensaje}`).join('\n');
+    const datos = variantes.map(v => ({...v}));
+    const prompt = `${seller.prompt}\nSos Martín, asesor de SURFRANCE. Conversá de forma cálida y natural en español argentino con voseo, sin sonar cortante ni interrogatorio.\nLos únicos datos comerciales autorizados son los siguientes registros actuales de Google Sheets:\n${JSON.stringify(datos)}\nHistorial reciente:\n${historial}\nContexto: ${instruccion}\nReglas: Interpretá la intención del cliente usando el historial. Puede comparar versiones, consultar equipamiento, pedir fichas técnicas o pedir asesoramiento SIN elegir todavía una versión. Si pregunta diferencias, compará únicamente los campos comprobables entre ambas filas. Si pide equipamiento o fichas que no constan en los registros, reconocé con naturalidad qué falta; no inventes equipamiento, documentos, enlaces, prestaciones ni precios. No obligues a seleccionar una versión para responder una comparación. Si ya eligió una versión, respetá el pedido inicial de información y brindá datos relevantes disponibles sin hacerle repetir la pregunta. Nunca inventes condiciones ni afirmes que hay documentos que no aparecen en los datos. Máximo 4 oraciones breves, una sola pregunta útil cuando corresponda. No uses respuestas prefabricadas.\nMensaje actual: ${JSON.stringify(mensaje)}`;
+    try {
+        const resultado = await conTimeout(groq.chat.completions.create({
+            model: GROQ_MODEL, reasoning_effort: 'none', reasoning_format: 'hidden',
+            messages: [{role:'system',content:prompt},{role:'user',content:mensaje}],
+            temperature: 0.3, max_tokens: 260
+        }), 6200, 'Conversación de variantes Qwen');
+        const texto = normalizarEstiloMartin(String(resultado.choices?.[0]?.message?.content || '')
+            .replace(/<think>[\s\S]*?<\/think>/gi, '').trim());
+        if (!texto || /<think>/i.test(texto)) throw new Error('Qwen sin respuesta utilizable');
+        return texto;
+    } catch (error) {
+        console.error('⚠️ Conversación de variantes:', error.message);
+        // Fallo técnico explícito: no inventar una respuesta comercial.
+        return 'No pude consultar bien esa información en este momento. ¿Me permitís intentarlo de nuevo?';
+    }
+}
+
 async function respuestaSeguraIA(
     mensaje,
     cliente,
@@ -3777,41 +3801,6 @@ async function procesarMensaje(
             cliente.modelo = null;
         } else {
 
-        // Si el cliente no conoce las versiones, no lo obligamos a hablar en
-        // lenguaje técnico. Le damos una referencia comercial simple usando
-        // EXCLUSIVAMENTE la cuota 1 de cada fila de VEHICULOS en Sheets.
-        const noConoceVersion = contieneAlguna(mensaje, [
-            'no se', 'no sé', 'no conozco', 'ni idea', 'no vi',
-            'ninguno', 'ninguna', 'cualquiera', 'ayudame', 'ayúdame'
-        ]);
-
-        if (noConoceVersion && pendientes.length > 1) {
-            const conCuota = pendientes
-                .map(v => ({
-                    vehiculo: v,
-                    cuota: numeroDesdeMonto(v.cuota_1 || v.cuota1)
-                }))
-                .filter(x => x.cuota !== null);
-
-            if (conCuota.length >= 2) {
-                const referencias = conCuota
-                    .map(x => `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`);
-
-                const textoReferencias = referencias.length === 2
-                    ? `${referencias[0]} y ${referencias[1]}`
-                    : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
-
-                const respuesta =
-                    respuestaVariantesConCuotasNatural(
-                        pendientes,
-                        mensaje
-                    );
-
-                guardarHistorial(cliente, 'martin', respuesta);
-                return respuesta;
-            }
-        }
-
         // Antes de pedir que repita el nombre de la versión, intentamos
         // entender cómo una persona se referiría naturalmente a las opciones
         // que Martín acaba de mostrar: por cuota, posición, versión o "la más barata".
@@ -3828,24 +3817,8 @@ async function procesarMensaje(
             cliente.esperandoRespuesta = null;
             cliente.opcionesEsperadas = [];
 
-            let respuesta;
-
-            if (pideRequisitosParaEmpezar(mensaje)) {
-                cliente.etapa = 'consultando_requisitos';
-                cliente.esperandoRespuesta = 'aceptar_derivacion';
-                respuesta =
-                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
-                    responderRequisitos(elegida);
-            } else if (contieneAlguna(mensaje, ['cuota', 'cuotas', 'detalle de cuotas'])) {
-                cliente.etapa = 'consultando_cuotas';
-                respuesta =
-                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
-                    responderCuotas(elegida);
-            } else {
-                respuesta =
-                    `Perfecto, entonces vemos el ${nombreVehiculo(elegida)}. ` +
-                    'Contame qué te gustaría saber y seguimos desde ahí.';
-            }
+            const respuesta = await conversarVariantesIA(mensaje, cliente, [elegida],
+                'El cliente acaba de seleccionar esta versión. Conservá su solicitud previa de información, aunque haya sido anterior a la selección.');
 
             guardarHistorial(cliente, 'martin', respuesta);
             return respuesta;
@@ -3863,26 +3836,18 @@ async function procesarMensaje(
             cliente.esperandoRespuesta = null;
             cliente.opcionesEsperadas = [];
 
-            const respuesta =
-                responderInfoInicial(elegida);
+            const respuesta = await conversarVariantesIA(mensaje, cliente, [elegida],
+                'El cliente acaba de identificar esta versión. Respondé a su interés previo con información real.');
 
             guardarHistorial(cliente, 'martin', respuesta);
             return respuesta;
         }
 
-        if (filtradas.length > 1) {
-            cliente.variantesPendientes = filtradas.map(v => v.key);
-            cliente.opcionesEsperadas = cliente.variantesPendientes;
-
-            const respuesta = respuestaElegirVersion(filtradas);
-            guardarHistorial(cliente, 'martin', respuesta);
-            return respuesta;
-        }
-
-        const respuesta =
-            'Disculpá, no entendí bien a cuál de las opciones te referís. ' +
-            respuestaElegirVersion(pendientes);
-
+        // Sin selección inequívoca, se conserva el estado pendiente y Qwen
+        // responde libremente comparaciones, dudas y solicitudes de fichas.
+        const opcionesActuales = filtradas.length > 1 ? filtradas : pendientes;
+        const respuesta = await conversarVariantesIA(mensaje, cliente, opcionesActuales,
+            'Hay varias versiones posibles; el cliente NO está obligado a elegir antes de consultar.');
         guardarHistorial(cliente, 'martin', respuesta);
         return respuesta;
         } // Fin de resolución de variante pendiente
@@ -4036,42 +4001,8 @@ async function procesarMensaje(
         const buscaCuotaAccesible =
             buscaCuotaDeIngresoAccesible(mensaje);
 
-        let respuesta;
-
-        // Si el cliente no conoce las versiones y ya nos dijo que busca una cuota
-        // accesible, no lo obligamos a elegir por nombre técnico. Le mostramos una
-        // referencia simple usando EXCLUSIVAMENTE la cuota 1 leída de VEHICULOS.
-        if (buscaCuotaAccesible) {
-            const conCuota = modelosDirectosIniciales
-                .map(v => ({
-                    vehiculo: v,
-                    cuota: numeroDesdeMonto(v.cuota_1 || v.cuota1)
-                }))
-                .filter(x => x.cuota !== null)
-                .sort((a, b) => a.cuota - b.cuota);
-
-            if (conCuota.length > 0) {
-                const referencias = conCuota.map(x =>
-                    `${nombreVehiculo(x.vehiculo)} con una cuota inicial de ${formatearPesos(x.cuota)}`
-                );
-
-                const textoReferencias = referencias.length === 1
-                    ? referencias[0]
-                    : referencias.length === 2
-                        ? `${referencias[0]} y ${referencias[1]}`
-                        : `${referencias.slice(0, -1).join(', ')} y ${referencias[referencias.length - 1]}`;
-
-                respuesta =
-                    respuestaVariantesConCuotasNatural(
-                        modelosDirectosIniciales,
-                        mensaje
-                    );
-            }
-        }
-
-        if (!respuesta) {
-            respuesta = respuestaElegirVersion(modelosDirectosIniciales);
-        }
+        let respuesta = await conversarVariantesIA(mensaje, cliente, modelosDirectosIniciales,
+            'Primera consulta por una familia con varias versiones. Comprendé su necesidad; si quiere comparar o busca cuota accesible, usá solo datos reales de estas filas.');
 
         // Si el cliente abrió el mensaje saludando, Martín también saluda.
         // Se agrega sobre la respuesta ya resuelta sin tocar la detección de modelos.
