@@ -8,18 +8,45 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Groq from 'groq-sdk';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { loadSeller } from './utils/loader.js';
 
 import {
-    listarModelosDisponibles,
-    obtenerVehiculo
+    listarModelosDisponibles as listarModelosDisponiblesOriginal,
+    obtenerVehiculo as obtenerVehiculoOriginal
 } from './utils/dataSource.js';
 
 import {
     guardarLead as guardarLeadEnSheets
 } from './config/googleSheets.js';
 
+
+// Catálogo por mensaje: evita descargar VEHICULOS varias veces durante
+// la misma conversación, sin mantener datos comerciales entre mensajes.
+// Las solicitudes de distintos clientes nunca comparten el catálogo.
+const contextoCatalogo = new AsyncLocalStorage();
+
+async function listarModelosDisponibles() {
+    const contexto = contextoCatalogo.getStore();
+    if (!contexto) return listarModelosDisponiblesOriginal();
+    if (!contexto.catalogo) {
+        const inicio = Date.now();
+        contexto.catalogo = Promise.resolve().then(() => listarModelosDisponiblesOriginal());
+        contexto.catalogo.then(
+            () => console.log(`⏱️ [${contexto.requestId}] catálogo Sheets: ${Date.now() - inicio} ms (una lectura por mensaje)`),
+            error => console.warn(`⚠️ [${contexto.requestId}] Error catálogo:`, error.message)
+        );
+    } else {
+        contexto.reutilizaciones += 1;
+    }
+    return contexto.catalogo;
+}
+
+// Conserva la consulta específica: obtenerVehiculo incluye CUOTAS en Apps Script.
+async function obtenerVehiculo(modeloKey) {
+    return obtenerVehiculoOriginal(modeloKey);
+}
 
 dotenv.config();
 
@@ -137,11 +164,11 @@ function ejecutarEnColaContacto(clave, tarea) {
 
     colasPorContacto.set(id, actual);
 
-    actual.finally(() => {
-        if (colasPorContacto.get(id) === actual) {
-            colasPorContacto.delete(id);
-        }
-    });
+    // No crear una promesa rechazada sin manejador cuando falle una tarea.
+    actual.then(
+        () => { if (colasPorContacto.get(id) === actual) colasPorContacto.delete(id); },
+        () => { if (colasPorContacto.get(id) === actual) colasPorContacto.delete(id); }
+    );
 
     return actual;
 }
@@ -299,13 +326,20 @@ async function leerMemoriaSheets(telefono) {
     if (!clave) return null;
     try {
         const url = `${MARTIN_SHEETS_WEBAPP_URL}?action=memoria&telefono=${encodeURIComponent(clave)}`;
-        const r = await conTimeout(fetch(url), 1800, 'Lectura MEMORIA');
-        const data = await r.json();
-        if (!r.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${r.status}`);
-        return data?.memoria || null;
+        // Abort real de la consulta y límite que incluye también leer el JSON.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1800);
+        try {
+            const r = await fetch(url, { signal: controller.signal });
+            const data = await r.json();
+            if (!r.ok || data?.ok === false) throw new Error(data?.error || `HTTP ${r.status}`);
+            return data?.memoria || null;
+        } finally {
+            clearTimeout(timer);
+        }
     } catch (e) {
         console.error('⚠️ No se pudo leer MEMORIA:', e.message);
-        return null;
+        throw e; // No confundir fallo de red con memoria inexistente.
     }
 }
 
@@ -351,7 +385,13 @@ async function cargarMemoriaPersistente(telefono, cliente) {
     const clave = normalizarTelefono(telefono);
     if (!clave || memoriasCargadas.has(clave)) return;
 
-    const m = await leerMemoriaSheets(clave);
+    let m;
+    try {
+        m = await leerMemoriaSheets(clave);
+    } catch {
+        // Se podrá reintentar en el siguiente mensaje; no marcar como cargada.
+        return;
+    }
     memoriasCargadas.add(clave);
     if (!m) return;
 
@@ -5112,6 +5152,15 @@ app.post(
                 const textoHumano =
                     echo?.text?.body || '';
 
+                // Diagnóstico sin exponer el texto ni credenciales: el evento
+                // echo no demuestra por sí solo quién originó el mensaje.
+                console.log('🔎 Echo WhatsApp Business:', JSON.stringify({
+                    destinatario: telefonoCliente,
+                    messageId: echo?.id || null,
+                    tipo: echo?.type || null,
+                    tieneTexto: Boolean(textoHumano)
+                }));
+
                 const clienteHumano = getCliente(telefonoCliente);
                 await cargarMemoriaPersistente(telefonoCliente, clienteHumano);
 
@@ -5271,9 +5320,12 @@ async function procesarEntradaManyChat(body = {}) {
 
     const requestId = `${Date.now().toString(36)}-${(++secuenciaSolicitudes).toString(36)}`;
 
+    const inicioRecepcion = Date.now();
     return ejecutarEnColaContacto(
         identificador,
         async () => {
+            const esperaCola = Date.now() - inicioRecepcion;
+            console.log(`⏱️ [${requestId}] espera cola: ${esperaCola} ms`);
             const inicioSolicitud = Date.now();
             const marcarTiempo = (etapa) => {
                 console.log(`⏱️ [${requestId}] ${etapa}: ${Date.now() - inicioSolicitud} ms`);
@@ -5343,12 +5395,37 @@ async function procesarEntradaManyChat(body = {}) {
             }
 
             const inicioProcesamiento = Date.now();
-            const replyCrudo = await procesarMensaje(mensaje, identificador);
+            const contexto = { requestId, catalogo: null, reutilizaciones: 0 };
+            const replyCrudo = await contextoCatalogo.run(
+                contexto,
+                () => procesarMensaje(mensaje, identificador)
+            );
+            console.log(`♻️ [${requestId}] consultas de catálogo evitadas: ${contexto.reutilizaciones}`);
             const reply = aplicarLenguajeComercialMartin(replyCrudo);
             console.log(`⏱️ [${requestId}] procesamiento: ${Date.now() - inicioProcesamiento} ms`);
 
+            // Protección de carrera: un asesor puede tomar la conversación
+            // mientras Qwen/Sheets preparan la respuesta. No enviar una
+            // respuesta IA si el modo cambió durante ese procesamiento.
+            const modoAntesDeEntregar = telefono
+                ? getModoAtencion(telefono)
+                : 'IA';
+
+            if (modoAntesDeEntregar === 'HUMANO' || modoAntesDeEntregar === 'ESPERA') {
+                console.log(`🛑 [${requestId}] Respuesta IA suprimida: modo cambió a ${modoAntesDeEntregar} durante el procesamiento`);
+                marcarTiempo('respuesta suprimida');
+                return {
+                    ok: true,
+                    requestId,
+                    modo: modoAntesDeEntregar,
+                    responder: false,
+                    reply: ''
+                };
+            }
+
             console.log(`📤 [${requestId}] Respuesta Martin: ${reply}`);
             marcarTiempo('respuesta lista');
+            console.log(`⏱️ [${requestId}] total desde recepción: ${Date.now() - inicioRecepcion} ms`);
 
             // Persistencia asíncrona: nunca retrasa la respuesta de ManyChat.
             Promise.resolve()
@@ -5396,7 +5473,7 @@ app.post(
                 'Expires': '0'
             });
 
-            console.log(`✅ [${resultado.requestId}] JSON entregado a ManyChat`);
+            console.log(`📦 [${resultado.requestId}] JSON preparado para responder a ManyChat`);
 
             return res.json({
                 ok: resultado.ok,
